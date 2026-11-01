@@ -1,54 +1,50 @@
-# Starlight Starter Kit: Basics
+# Footba11 Heroes
 
-[![Built with Starlight](https://astro.badg.es/v2/built-with-starlight/tiny.svg)](https://starlight.astro.build)
+A playable, full-pitch 11v11 football game built in the existing Astro project. Everything runs locally in the browser: a fixed-step match simulation, Canvas2D broadcast view, keyboard and multi-touch controls, tactical AI, player and manager modes, and resumable local saves.
 
-```
-npm create astro@latest -- --template starlight
-```
+## Run
 
-[![Open in StackBlitz](https://developer.stackblitz.com/img/open_in_stackblitz.svg)](https://stackblitz.com/github/withastro/starlight/tree/main/examples/basics)
-[![Open with CodeSandbox](https://assets.codesandbox.io/github/button-edit-lime.svg)](https://codesandbox.io/p/sandbox/github/withastro/starlight/tree/main/examples/basics)
-[![Deploy to Netlify](https://www.netlify.com/img/deploy/button.svg)](https://app.netlify.com/start/deploy?repository=https://github.com/withastro/starlight&create_from_path=examples/basics)
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fwithastro%2Fstarlight%2Ftree%2Fmain%2Fexamples%2Fbasics&project-name=my-starlight-docs&repository-name=my-starlight-docs)
+Requires Node 22.12+ (verified on Node 24.19) and npm.
 
-> 🧑‍🚀 **Seasoned astronaut?** Delete this file. Have fun!
-
-## 🚀 Project Structure
-
-Inside of your Astro + Starlight project, you'll see the following folders and files:
-
-```
-.
-├── public/
-├── src/
-│   ├── assets/
-│   ├── content/
-│   │   ├── docs/
-│   └── content.config.ts
-├── astro.config.mjs
-├── package.json
-└── tsconfig.json
+```sh
+npm install --package-lock=false
+npm run dev -- --host 0.0.0.0
 ```
 
-Starlight looks for `.md` or `.mdx` files in the `src/content/docs/` directory. Each file is exposed as a route based on its file name.
+```sh
+npm test
+npm run build
+npm run preview -- --host 0.0.0.0
+```
 
-Images can be added to `src/assets/` and embedded in Markdown with a relative link.
+The default match has **12 real minutes per half**. Choose 5, 8, 12, 15, 20 or 45 minutes in Match settings. This is a browser game with Android-compatible touch controls, not a native APK.
 
-Static assets, like favicons, can be placed in the `public/` directory.
+## Controls
 
-## 🧞 Commands
+| Action | Keyboard |
+| --- | --- |
+| Move / aim at a restart | WASD or arrow keys |
+| Sprint | Shift |
+| Pass / defensive press | J or Space |
+| Through ball / defensive switch | U |
+| Cross / clearance | L |
+| Shoot / defensive tackle | K |
+| Switch player | Q |
+| Tackle | F |
+| One-two | X |
+| Close-control feint | Z |
+| Clear | C |
+| Next receiver | Tab while pitch is focused, or click a teammate |
+| Pause | P or Escape |
 
-All commands are run from the root of the project, from a terminal:
+Hold a pass, cross or shot action to increase power. The mobile joystick and action buttons accept simultaneous touches. During a restart, choose a teammate or aim with movement, then pass, cross or shoot. Opponent and manager-mode restarts are taken by AI.
 
-| Command                   | Action                                           |
-| :------------------------ | :----------------------------------------------- |
-| `npm install`             | Installs dependencies                            |
-| `npm run dev`             | Starts local dev server at `localhost:4321`      |
-| `npm run build`           | Build your production site to `./dist/`          |
-| `npm run preview`         | Preview your build locally, before deploying     |
-| `npm run astro ...`       | Run CLI commands like `astro add`, `astro check` |
-| `npm run astro -- --help` | Get help using the Astro CLI                     |
+Player career locks control to the selected DEF, MID or FWD. Manager career simulates both sides while your formation, approach and substitutions affect the home team. Substitutions require a stoppage and are limited to five. Career results are recorded at full time. Main Menu saves an unfinished match; returning to the same mode or reloading offers Resume Match. Browser storage must be available for persistence.
 
-## 👀 Want to learn more?
+## Tests and scope
 
-Check out [Starlight’s docs](https://starlight.astro.build/), read [the Astro documentation](https://docs.astro.build), or jump into the [Astro Discord server](https://astro.build/chat).
+`npm test` runs deterministic boundary, offside, clock, contact/foul, gameplay, formation and persistence tests with individual test counts. `python tests/browser_smoke.py` runs the browser checks when Python Playwright and Chromium are installed; set `GAME_URL` or `CHROMIUM_PATH` to override their defaults.
+
+Development-only diagnostics are available with `?debug=1` and the `window.__football` inspection hook. Neither is enabled in a production build.
+
+See [implementation scope](docs/IMPLEMENTATION.md) for verified functionality and limitations. The engine implements a tested core rules subset; it is **not** a certified, complete implementation of all 17 IFAB laws. No official club branding or player assets are used. All rendering is local and needs no external images or fonts.

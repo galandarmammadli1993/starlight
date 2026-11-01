@@ -1,0 +1,66 @@
+---
+import '../game/style.css';
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#101613" />
+    <meta name="description" content="Footba11 Heroes. A playable 11-a-side football game with tactical AI, real ball physics, careers and touch controls." />
+    <link rel="icon" href={`${import.meta.env.BASE_URL}/favicon.svg`} type="image/svg+xml" />
+    <title>Footba11 Heroes — Make the game yours.</title>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="rail">
+        <a href={import.meta.env.BASE_URL} class="brand" aria-label="Footba11 Heroes home"><span class="brand-mark">11<span>→</span></span><span>FOOTBA11<b>HEROES</b></span></a>
+        <div class="rail-label">YOUR FOOTBALL WORLD</div>
+        <nav aria-label="Main navigation">
+          <button class="nav-item active" data-nav="play"><span>◈</span> Play <i>01</i></button>
+          <button class="nav-item" data-nav="player"><span>♙</span> Player career</button>
+          <button class="nav-item" data-nav="manager"><span>▤</span> Manager career</button>
+          <button class="nav-item" data-nav="club"><span>⬡</span> My club</button>
+          <button class="nav-item" data-nav="settings"><span>⚙</span> Match settings</button>
+        </nav>
+        <div class="rail-bottom"><span class="edition">THE BEAUTIFUL GAME.<br />IN YOUR HANDS.</span><div class="profile"><span class="avatar" id="avatar">AH</span><span id="profile-name">Alex Hero<small>LOCAL PROFILE</small></span><button id="edit-profile" aria-label="Edit player profile">→</button></div></div>
+      </aside>
+      <main>
+        <header class="topbar"><div><span class="eyebrow">THE CLUBHOUSE</span><h1 id="page-heading">Let’s play football.</h1></div><div class="top-actions"><span class="season">2026 <span>/</span> 27</span><button class="icon-button" id="help-button" aria-label="Controls and how to play">?</button><button class="save-button" id="save-button"><span class="status-dot"></span> <span id="save-label">Local save</span></button></div></header>
+        <section id="home-intro" class="home-intro">
+          <div class="hero-copy"><span class="eyebrow mint">EVERY MATCH. A NEW STORY.</span><h2>MAKE THE<br />GAME <em>YOURS.</em></h2><p>Find the space. Build the play. Own the moment.</p></div>
+          <div class="hero-art" aria-hidden="true"><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><span class="hero-eleven">11</span><div class="hero-stamp">NO SCRIPT.<br />JUST FOOTBALL. <span>→</span></div></div>
+          <div class="hero-footer"><span><span class="status-dot"></span> YOUR NEXT CHAPTER STARTS HERE</span><span>11 v 11 <i>·</i> FULL PITCH <i>·</i> YOUR RULES OF PLAY</span></div>
+        </section>
+        <section class="mode-grid" id="mode-grid" aria-label="Game modes">
+          <button class="mode-card selected" data-mode="quick"><span class="mode-icon">→</span><span><b>Quick match</b><small>Straight to the beautiful game</small></span><span class="mode-arrow">→</span></button>
+          <button class="mode-card" data-mode="player"><span class="mode-icon">♙</span><span><b>Player career</b><small>One player. Your legacy.</small></span><span class="mode-arrow">→</span></button>
+          <button class="mode-card" data-mode="manager"><span class="mode-icon">▤</span><span><b>Manager career</b><small>Your vision. Your eleven.</small></span><span class="mode-arrow">→</span></button>
+        </section>
+        <div class="section-heading"><h2 id="match-section-heading">MATCH CENTRE</h2><span id="match-context">EXHIBITION <span class="dim">/</span> BAKU PARK</span></div>
+        <section class="match-layout">
+          <div class="match-card">
+            <div class="scoreboard"><div class="team team-home"><span class="crest home-crest">BA<span>★</span></span><span><b>BAKU ATHLETIC</b><small>HOME · <span id="formation-label">4-3-3</span></small></span></div><div class="score-centre"><div class="score"><span id="home-score">0</span><span class="score-dash">:</span><span id="away-score">0</span></div><div class="clock-pill"><span class="status-dot"></span><span id="clock">00:00</span><span id="half-label">PRE-MATCH</span></div></div><div class="team team-away"><span><b>COAST UNITED</b><small>AWAY · 4-3-3</small></span><span class="crest away-crest">CU<span>◆</span></span></div></div>
+            <div class="pitch-wrap" id="pitch-wrap"><canvas id="pitch" aria-label="Interactive football pitch. Use WASD or the touch joystick to move. J passes, K shoots, L crosses. Press question mark for all controls." tabindex="0"></canvas><div class="pitch-label"><span class="status-dot"></span><span id="pitch-status">KICK-OFF READY</span></div><div class="pitch-weather" aria-hidden="true">☀ &nbsp; 21° &nbsp; BAKU</div><div class="match-message" id="match-message" role="status" aria-live="polite"></div><div class="match-overlay" id="match-overlay"><span id="overlay-eyebrow">THE STAGE IS SET</span><h3 id="overlay-title">Your pitch. Your moment.</h3><p id="overlay-description">A full 11 v 11 match. Build it your way.</p><button class="primary" id="kickoff-button">KICK OFF <span>→</span></button><span class="overlay-note" id="overlay-note">12 MIN / HALF · KEYBOARD + TOUCH</span></div></div>
+            <div class="match-toolbar"><div><span class="kit-dot"></span><b id="controlled-label">BAKU ATHLETIC</b><span class="toolbar-hint" id="action-hint">Choose a mode, then kick off</span></div><div><button class="text-button" id="target-button" title="Choose the next passing target">Target <kbd>Tab</kbd></button><button class="icon-button small" id="pause-button" aria-label="Pause match" disabled>II</button><button class="icon-button small" id="fullscreen-button" aria-label="Toggle full screen">⛶</button></div></div>
+            <div class="touch-controls" id="touch-controls"><div class="joystick" id="joystick" aria-label="Movement joystick"><div class="joystick-ring"></div><div class="joystick-stick" id="joystick-stick"></div><span>MOVE</span></div><div class="action-controls"><div class="control-row"><button class="game-button sprint" data-hold="sprint">SPRINT <kbd>⇧</kbd></button><button class="game-button" data-action="switch">SWITCH <kbd>Q</kbd></button><button class="game-button" data-action="tackle">TACKLE <kbd>F</kbd></button></div><div class="control-row"><button class="game-button" data-action="pass">PASS <kbd>J</kbd></button><button class="game-button" data-action="through">THROUGH <kbd>U</kbd></button><button class="game-button" data-action="cross">CROSS <kbd>L</kbd></button><button class="game-button shoot" data-action="shoot">SHOOT <kbd>K</kbd></button></div></div></div>
+            <div class="match-bottom"><span><b>W A S D</b> Move <i>·</i> <b>J</b> Pass <i>·</i> <b>K</b> Shoot <i>·</i> <b>X</b> One-two</span><button class="text-button" id="all-controls">ALL CONTROLS →</button></div>
+          </div>
+          <aside class="match-panel">
+            <div class="panel-tabs"><button class="active" data-panel="tactics">TACTICS</button><button data-panel="stats">STATS</button><button data-panel="events">FEED</button></div>
+            <div id="panel-tactics" class="panel-content"><div class="panel-heading"><span>MATCH PLAN</span><span class="small-badge">HOME</span></div><label class="field-label" for="formation">FORMATION</label><select id="formation"><option>4-3-3</option><option>4-4-2</option><option>4-2-3-1</option><option>3-5-2</option></select><div class="mini-pitch" id="mini-pitch" aria-label="Team formation"></div><label class="field-label" for="tactic">TEAM APPROACH</label><select id="tactic"><option value="balanced">Balanced</option><option value="wide">Play the wings</option><option value="press">High press</option><option value="counter">Counter-attack</option></select><div class="tactic-description" id="tactic-description">Keep your shape. Move the ball. Find the opening.</div><div class="panel-divider"></div><div class="panel-heading"><span>YOUR ELEVEN</span><span id="subs-count">0 / 5 SUBS</span></div><div id="lineup" class="lineup"></div></div>
+            <div id="panel-stats" class="panel-content" hidden><div class="panel-heading"><span>MATCH STATISTICS</span><span>BA / CU</span></div><div id="match-stats"></div><p class="panel-note">Live statistics from this match. Possession measures time on the ball.</p></div>
+            <div id="panel-events" class="panel-content" hidden><div class="panel-heading"><span>TOUCHLINE FEED</span><span class="status-dot"></span></div><div id="event-feed" class="event-feed"><p class="panel-note">The story starts at kick-off.</p></div></div>
+            <div class="panel-footer"><span class="status-dot"></span> INDEPENDENT BALL PHYSICS</div>
+          </aside>
+        </section>
+        <footer class="page-footer"><span>FOOTBA11 HEROES <span class="dim">/</span> THE BEAUTIFUL GAME, REIMAGINED.</span><button class="text-button" id="menu-button">← MAIN MENU</button></footer>
+      </main>
+    </div>
+    <dialog id="settings-dialog"><form id="settings-form"><div class="dialog-heading"><span class="eyebrow">MAKE IT YOURS</span><button type="button" class="close-dialog" aria-label="Close settings">×</button></div><h2>Match settings</h2><p>Choose your tempo. Football should have time to breathe.</p><label for="half-minutes">REAL MINUTES PER HALF</label><select id="half-minutes"><option value="5">5 minutes</option><option value="8">8 minutes</option><option value="12" selected>12 minutes · default</option><option value="15">15 minutes</option><option value="20">20 minutes</option><option value="45">45 minutes · real time</option></select><label for="player-name">PLAYER NAME</label><input id="player-name" maxlength="24" value="Alex Hero" required /><div class="form-columns"><div><label for="player-role">CAREER POSITION</label><select id="player-role"><option value="DEF">Defender</option><option value="MID" selected>Midfielder</option><option value="FWD">Forward</option></select></div><div><label for="shirt-number">SHIRT NUMBER</label><input id="shirt-number" type="number" min="2" max="99" value="10" required /></div></div><label for="kit-color">HOME KIT</label><select id="kit-color"><option value="mint">Athletic mint</option><option value="blue">Royal blue</option><option value="rose">Rose red</option></select><p class="panel-note" id="settings-note">Match length applies to your next match. Your profile is stored on this device.</p><button class="primary" type="submit">SAVE SETTINGS <span>✓</span></button></form></dialog>
+    <dialog id="help-dialog"><div class="dialog-heading"><span class="eyebrow">THE PLAYBOOK</span><button class="close-dialog" aria-label="Close controls">×</button></div><h2>Play the whole pitch.</h2><p>Move with WASD or the joystick. Click a teammate or tap Target to choose a receiver. Hold an action button to add power.</p><div class="help-grid"><span><kbd>WASD / ↑↓←→</kbd> Move / aim</span><span><kbd>Shift</kbd> Sprint</span><span><kbd>J / Space</kbd> Short pass</span><span><kbd>U</kbd> Through ball</span><span><kbd>L</kbd> Long pass / cross</span><span><kbd>K</kbd> Shoot / header</span><span><kbd>X</kbd> One-two</span><span><kbd>Z</kbd> Close control</span><span><kbd>F</kbd> Tackle</span><span><kbd>C</kbd> Clear the ball</span><span><kbd>Q</kbd> Switch player</span><span><kbd>P / Esc</kbd> Pause</span></div><p>Restarts: aim with movement, select a receiver, then pass, cross or shoot. In player career you control your chosen position; in manager career your team plays under your tactical instructions.</p><p class="panel-note">This browser edition implements a tested core rules subset, not a certified implementation of all 17 IFAB laws. Competition-specific extra time, shootouts, injuries and advanced referee procedures are outside the current release.</p><button class="primary close-dialog">BACK TO THE PITCH <span>→</span></button></dialog>
+    <dialog id="club-dialog"><div class="dialog-heading"><span class="eyebrow">YOUR STORY SO FAR</span><button class="close-dialog" aria-label="Close club">×</button></div><h2>Baku Athletic</h2><p>A new club. A blank page. A legacy to build.</p><div class="club-record" id="club-record"></div><div id="career-history"></div><p class="panel-note">Career results and your profile are saved on this browser. An unfinished match is recorded as a saved match, not a completed result.</p><button class="primary close-dialog">BACK TO THE CLUB <span>→</span></button></dialog>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script>import '../game/app.mjs';</script>
+  </body>
+</html>
