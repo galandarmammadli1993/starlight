@@ -92,6 +92,8 @@ with sync_playwright() as playwright:
         assert page.evaluate("document.activeElement.id!=='pitch'")
         page.locator("#pause-button").focus()
         page.keyboard.press("Tab")
+        assert page.evaluate("document.activeElement.id==='camera-toggle'")
+        page.keyboard.press("Tab")
         assert page.evaluate("document.activeElement.id==='fullscreen-button'")
         page.locator("#pitch").focus()
         passed("Receiver shortcut is scoped to pitch; keyboard focus can leave it")
@@ -121,15 +123,25 @@ with sync_playwright() as playwright:
         passed("3D teammate picking and keyboard pass launch the single independent ball")
 
         arrange_owner(page, 78, 11)
+        # Observe the actual launch in the same browser event, before a slow
+        # software-WebGL driver round trip lets defenders/physics alter velocity.
+        page.evaluate("""() => {
+          window.__shotLaunches=[];
+          document.addEventListener('keyup',event=>{
+            if(event.code!=='KeyK')return;
+            const e=window.__football.engine;
+            window.__shotLaunches.push({speed:Math.hypot(e.ball.vx,e.ball.vy),shots:e.stats.shots[0]});
+          });
+        }""")
         shots = page.evaluate("window.__football.engine.stats.shots[0]")
         page.keyboard.press("k", delay=80)
         assert page.evaluate("window.__football.engine.stats.shots[0]") == shots + 1
-        low_speed = page.evaluate("Math.hypot(window.__football.engine.ball.vx,window.__football.engine.ball.vy)")
+        low_speed = page.evaluate("window.__shotLaunches.at(-1).speed")
         arrange_owner(page)
         page.keyboard.down("k")
         page.wait_for_timeout(900)
         page.keyboard.up("k")
-        high_speed = page.evaluate("Math.hypot(window.__football.engine.ball.vx,window.__football.engine.ball.vy)")
+        high_speed = page.evaluate("window.__shotLaunches.at(-1).speed")
         assert high_speed > low_speed + 4, (low_speed, high_speed)
         assert one_ball(page)
         passed("Wide-angle shots work and held shoot input increases real ball speed")

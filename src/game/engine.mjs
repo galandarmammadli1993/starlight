@@ -17,7 +17,7 @@ export class MatchEngine {
     this.directions=[1,-1]; this.score=[0,0]; this.clock=new MatchClock(this.options.halfMinutes);
     this.players=[]; this.formation=this.options.formation; this.tactic='balanced'; this.controlled=6;
     this.state='PRE_MATCH'; this.previousState=null; this.stateAge=0; this.time=0; this.accumulator=0;
-    this.playerGoals={};this.passRequest=null;
+    this.playerGoals={};this.passRequest=null;this.passCall=null;this.lastPassCallAt=-Infinity;
     this.stats={shots:[0,0],passes:[0,0],completed:[0,0],possession:[0,0],corners:[0,0],fouls:[0,0],offsides:[0,0]};
     this.eventLog=[]; this.notification='Welcome to Footba11 Heroes'; this.restart=null; this.selectedTarget=null;
     this.offside=null; this.restartOrigin=null; this.lastBoundary=null; this.lastDecision='Kick-off';
@@ -242,22 +242,17 @@ export class MatchEngine {
     else{this.keeperHold=null;this.keeperTime=0;}
     p.timer=.38;
     if(this.penaltyInProgress){this.penaltyInProgress=false;if(this.deferredClockEvent){this._endPeriod(this.deferredClockEvent);return;}}
+    if(this.passCall?.playerId===p.id&&['waiting','blocked','passed'].includes(this.passCall.status)){this.passRequest=null;this._passFeedback('received','Top səndədir',null,this.passCall);}
+    else if(p.team===1&&this.passCall?.status==='passed'){this._passFeedback('opponent','Ötürmə kəsildi — top rəqibdədir','intercepted',this.passCall);}
     if(p.team===0&&this.options.mode==='quick'&&p.role!=='GK')this.controlled=p.id;
   }
   _thinkAI(dt){
-    const owner=this.ball.owner!==null?this.players[this.ball.owner]:null;if(!owner)return;
+    const owner=this.ball.owner!==null?this.players[this.ball.owner]:null;
+    if(this._advancePassRequest(owner))return;
+    if(!owner)return;
     if(owner.id===this.controlled&&this.options.mode!=='manager')return;
     owner.timer-=dt;if(owner.timer>0)return;
     owner.timer=.7;
-    if(this.passRequest){
-      const request=this.passRequest,receiver=this.players[request.playerId];
-      if(request.expires<this.time||!receiver||receiver.sentOff||receiver.substituted)this.passRequest=null;
-      else if(owner.team===0&&request.ownerId===owner.id&&distance(owner,receiver)>3&&distance(owner,receiver)<42){
-        const dx=receiver.x-owner.x,dy=receiver.y-owner.y,d2=dx*dx+dy*dy;
-        const blocked=this.players.some(def=>{if(def.team===0||def.sentOff)return false;const t=((def.x-owner.x)*dx+(def.y-owner.y)*dy)/d2;return t>.1&&t<.9&&length(def.x-owner.x-t*dx,def.y-owner.y-t*dy)<1.7;});
-        if(!blocked){this.passRequest=null;this._kick(owner,'pass',.6,{x:receiver.x+receiver.vx*.15,y:receiver.y+receiver.vy*.15});return;}
-      }
-    }
     if(this.keeperHold===owner.id){if(this.keeperTime>1.5)this._kick(owner,'pass',.65);return;}
     const goalX=this.directions[owner.team]===1?105:0,goalDistance=length(goalX-owner.x,34-owner.y);
     const opponent=this._nearest(other(owner.team),owner);
@@ -324,6 +319,8 @@ export class MatchEngine {
     if(kind==='switch'){if(this.options.mode==='player')return false;const nearest=this._nearest(0,this.ball);if(nearest){this.controlled=nearest.id;return true;}return false;}
     if(kind==='restart')return this.continueMatch()===true;
     if(!PLAYER_ACTIONS.has(kind))return false;
+    // Requesting the ball is never a set-piece delivery, even from the keyboard.
+    if(kind==='call'&&this.state!=='IN_PLAY')return false;
     if(this.state==='PAUSED'||this.state==='HALF_TIME'||this.state==='FULL_TIME')return false;
     if(ACTIVE_RESTARTS.has(this.state)){if(this.restart?.team===0&&(this.options.mode!=='player'||this.restart.takerId===this.careerPlayer))return this._takeRestart(kind,power,aim);return false;}
     if(this.state!=='IN_PLAY')return false;
@@ -343,11 +340,67 @@ export class MatchEngine {
     if(kind==='oneTwo'){this.oneTwoRunner=p.id;const result=this._kick(p,'pass',power,aim);p.vx=this.directions[p.team]*7.5;return result;}
     return this._kick(p,kind,power,aim);
   }
+  /** Plain status for the HUD and the human-model hand signal. No UI guesses. */
+  getPassCallStatus(){
+    const p=this.controlledPlayer,owner=this.ball.owner!==null?this.players[this.ball.owner]:null;
+    const base={playerId:p?.id??null,ownerId:owner?.id??null,requestedAt:null,expires:null,reason:null,enabled:false};
+    if(this.options.mode==='manager')return {...base,status:'unavailable',message:'Məşqçi rejimi — komandanı taktika ilə idarə et'};
+    if(!p||p.sentOff||this.options.mode==='player'&&p.substituted)return {...base,status:'unavailable',message:'Oyunçun meydanda deyil'};
+    if(this.state!=='IN_PLAY')return {...base,status:'unavailable',message:this.state==='PAUSED'?'Oyun fasilədədir':'Oyun başlayanda top istəyə bilərsən'};
+    const feedback=this.passCall?.playerId===p.id&&this.time<=(this.passCall.feedbackUntil??0)?this.passCall:null;
+    if(owner?.id===p.id)return feedback?.status==='received'?{...base,...feedback,enabled:false}:{...base,status:'own_ball',message:'Top səndədir — ötür və ya zərbə vur'};
+    if(owner?.team===1)return {...base,status:'opponent',message:feedback?.reason==='intercepted'?'Ötürmə kəsildi — top rəqibdədir':'Top rəqibdədir — pres et'};
+    if(this.passRequest?.playerId===p.id)return {...base,...this.passCall,enabled:false};
+    if(feedback?.status==='passed'&&this.ball.owner===null)return {...base,...feedback,enabled:false};
+    if(!owner)return {...base,status:'loose',message:'Top sərbəstdir — yaxınlaş'};
+    const enabled=this.time-(this.lastPassCallAt??-Infinity)>=.7;
+    if(feedback&&['expired','unavailable'].includes(feedback.status))return {...base,...feedback,ownerId:owner.id,enabled};
+    return {...base,status:'idle',message:'Top komanda yoldaşındadır — R və ya TOP İSTƏ',enabled};
+  }
+  _passFeedback(status,message,reason=null,previous=this.passRequest??this.passCall){
+    this.passCall={status,message,reason,playerId:previous?.playerId??this.controlled,ownerId:previous?.ownerId??null,requestedAt:previous?.requestedAt??this.time,expires:previous?.expires??this.time,feedbackUntil:this.time+(status==='passed'?4:2.5)};
+    return this.passCall;
+  }
+  _passLane(owner,receiver){
+    const d=distance(owner,receiver);
+    if(d<2.5)return {reason:'close',message:'Bir az uzaqlaş — ötürmə üçün yer aç'};
+    if(d>50)return {reason:'distance',message:'Çox uzaqdasan — komanda yoldaşına yaxınlaş'};
+    const snapshot=createOffsideSnapshot(this.players,this.ball,owner.team,this.directions);
+    if(snapshot.candidates.includes(receiver.id))return {reason:'offside',message:'Ofsayddasan — geri çəkil'};
+    const dx=receiver.x-owner.x,dy=receiver.y-owner.y,d2=dx*dx+dy*dy;
+    const blocked=this.players.some(def=>{if(def.team===owner.team||def.sentOff)return false;const t=((def.x-owner.x)*dx+(def.y-owner.y)*dy)/d2;return t>.08&&t<.95&&length(def.x-owner.x-t*dx,def.y-owner.y-t*dy)<1.7;});
+    return blocked?{reason:'lane',message:'Yol bağlıdır — yerini dəyiş'}:null;
+  }
+  _advancePassRequest(owner){
+    const request=this.passRequest;if(!request)return false;
+    const receiver=this.players[request.playerId];
+    if(request.expires<this.time){this.passRequest=null;this._passFeedback('expired','İstək bitdi — yenidən top istə','timeout',request);return false;}
+    if(!receiver||receiver.sentOff||this.options.mode==='player'&&receiver.substituted){this.passRequest=null;this._passFeedback('unavailable','Oyunçu ötürmə ala bilmir','ineligible',request);return false;}
+    if(!owner){this.passRequest=null;this._passFeedback('loose','Top sərbəstdir — yaxınlaş','lost_control',request);return false;}
+    if(owner.id===receiver.id){this.passRequest=null;this._passFeedback('received','Top səndədir',null,request);return false;}
+    if(owner.team!==receiver.team){this.passRequest=null;this._passFeedback('opponent','Top rəqibdədir — pres et','lost_possession',request);return false;}
+    if(owner.id!==request.ownerId){request.ownerId=owner.id;request.readyAt=this.time+.3;}
+    const blocked=this._passLane(owner,receiver);
+    if(blocked){this._passFeedback('blocked',blocked.message,blocked.reason,request);return true;}
+    this._passFeedback('waiting','Ötürmə istəndi — boş yerə çıx',null,request);
+    if(this.time<(request.readyAt??this.time))return true;
+    // The AI decides after a reaction window; the ball travels and can be intercepted.
+    this.passRequest=null;
+    if(this._kick(owner,'pass',.6,{x:receiver.x+receiver.vx*.15,y:receiver.y+receiver.vy*.15})){
+      this._passFeedback('passed','Komanda yoldaşın ötürür',null,request);
+    }else this._passFeedback('unavailable','Ötürmə alınmadı — yenidən yer aç','kick_failed',request);
+    return true;
+  }
   _requestPass(p){
+    if(this.options.mode==='manager'||this.state!=='IN_PLAY'||!p||p.sentOff||this.options.mode==='player'&&p.substituted)return false;
     const owner=this.ball.owner!==null?this.players[this.ball.owner]:null;
-    if(this.options.mode!=='player'||!owner||owner.team!==0||owner.id===p.id||p.sentOff)return false;
-    this.passRequest={playerId:p.id,ownerId:owner.id,expires:this.time+3};
-    this._log('CALL',`${p.name} calls for the ball`);return true;
+    if(!owner||owner.team!==p.team||owner.id===p.id)return false;
+    if(this.passRequest?.playerId===p.id||this.time-(this.lastPassCallAt??-Infinity)<.7)return false;
+    this.lastPassCallAt=this.time;
+    this.passRequest={playerId:p.id,ownerId:owner.id,requestedAt:this.time,readyAt:this.time+.3,expires:this.time+3};
+    const blocked=this._passLane(owner,p);
+    this._passFeedback(blocked?'blocked':'waiting',blocked?.message??'Ötürmə istəndi — boş yerə çıx',blocked?.reason??null,this.passRequest);
+    this._log('CALL','Ötürmə istəndi — boş yerə çıx');return true;
   }
   _tackle(p){
     if(!p||p.sentOff)return false;const target=this.ball.owner!==null?this.players[this.ball.owner]:null;
@@ -370,7 +423,7 @@ export class MatchEngine {
   }
   _stop(event){
     if(this.state!=='IN_PLAY')return;
-    this.ball.owner=null;this.keeperHold=null;this.offside=null;this.penaltyInProgress=false;
+    this.ball.owner=null;this.keeperHold=null;this.offside=null;this.penaltyInProgress=false;this.passRequest=null;
     if(event.type==='GOAL'){
       this.score[event.team]++;
       const scorer=this.ball.lastTouch?.team===event.team?this.ball.lastTouch.playerId:null;

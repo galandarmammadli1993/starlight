@@ -282,3 +282,82 @@ test('a dismissed goalkeeper cannot become the taker and freeze a goal kick',()=
 test('invalid restart coordinates do not corrupt the live ball or state',()=>{
   const e=field(),before={...e.ball};assert.equal(e._setupRestart({type:'THROW_IN',team:0,x:NaN,y:0}),false);assert.deepEqual(e.ball,before);assert.equal(e.state,'IN_PLAY');
 });
+
+function callScenario(mode='player'){
+  const e=field({mode,position:'MID'}),id=e.careerPlayer,caller=e.players[id],owner=e.players[8];
+  e.controlled=id;
+  for(const p of e.players){p.x=p.team?94:8;p.y=3+p.number*5;p.vx=p.vy=0;p.timer=20;}
+  caller.x=40;caller.y=34;owner.x=53;owner.y=34;owner.timer=20;
+  Object.assign(e.ball,{x:53.4,y:34,z:r,vx:0,vy:0,vz:0,owner:owner.id,lastTouch:{team:0,playerId:owner.id}});
+  return {e,caller,owner};
+}
+test('pass call HUD distinguishes own ball, teammate possession, opponent, loose ball and pauses',()=>{
+  const {e,caller,owner}=callScenario();
+  assert.equal(e.getPassCallStatus().status,'idle');assert.equal(e.getPassCallStatus().enabled,true);
+  e.ball.owner=caller.id;assert.equal(e.getPassCallStatus().status,'own_ball');assert.equal(e.getPassCallStatus().enabled,false);
+  e.ball.owner=17;assert.equal(e.getPassCallStatus().status,'opponent');assert.match(e.getPassCallStatus().message,/rəqibdədir/);
+  e.ball.owner=null;assert.equal(e.getPassCallStatus().status,'loose');
+  e.ball.owner=owner.id;e.pause();assert.equal(e.getPassCallStatus().status,'unavailable');assert.equal(e.action('call'),false);
+});
+test('quick-match controlled footballer can explicitly request a teammate pass',()=>{
+  const {e,caller}=callScenario('quick');assert.equal(e.action('call'),true);assert.equal(e.passRequest.playerId,caller.id);
+  assert.equal(e.getPassCallStatus().status,'waiting');assert.equal(e.getPassCallStatus().enabled,false);
+});
+test('called pass waits for the AI reaction window and actually arrives through physical space',()=>{
+  const {e,caller,owner}=callScenario();const before={...e.ball};
+  assert.equal(e.action('call'),true);assert.deepEqual(e.ball,before);assert.equal(e.stats.passes[0],0);
+  advance(e,.2);assert.equal(e.stats.passes[0],0);assert.equal(e.ball.owner,owner.id);
+  advance(e,.15);assert.equal(e.stats.passes[0],1);assert.equal(e.getPassCallStatus().status,'passed');assert.equal(e.ball.owner,null);
+  assert.ok(Math.abs(e.ball.x-caller.x)>5,'pass is not a teleport to receiver');
+  for(let i=0;i<180&&e.ball.owner!==caller.id;i++)e.step(1/60);
+  assert.equal(e.ball.owner,caller.id);assert.equal(e.getPassCallStatus().status,'received');assert.match(e.getPassCallStatus().message,/Top səndədir/);
+});
+test('repeated pass-call presses cannot spam the log or extend a pending request',()=>{
+  const {e}=callScenario();assert.equal(e.action('call'),true);const expires=e.passRequest.expires;
+  for(let i=0;i<20;i++)assert.equal(e.action('call'),false);
+  assert.equal(e.eventLog.filter(event=>event.type==='CALL').length,1);assert.equal(e.passRequest.expires,expires);
+});
+test('a blocked call clearly reports the lane and can succeed when the receiver finds space',()=>{
+  const {e,caller}=callScenario();const defender=e.players[12];defender.x=46;defender.y=34;
+  assert.equal(e.action('call'),true);assert.equal(e.getPassCallStatus().status,'blocked');assert.equal(e.getPassCallStatus().reason,'lane');assert.match(e.getPassCallStatus().message,/Yol bağlıdır/);
+  e.time=.4;e._thinkAI(1/60);assert.equal(e.stats.passes[0],0);assert.ok(e.passRequest);
+  caller.y=47;e._thinkAI(1/60);assert.equal(e.getPassCallStatus().status,'passed');assert.equal(e.stats.passes[0],1);assert.ok(e.ball.vy>0);
+});
+test('an offside caller is instructed to retreat instead of forcing an illegal AI pass',()=>{
+  const {e,caller,owner}=callScenario();caller.x=90;owner.x=70;e.ball.x=70.4;
+  for(const p of e.players.filter(p=>p.team===1)){p.x=65;p.y=4+(p.number%6)*10;}
+  e.players[11].x=100;e.players[12].x=85;e.players[12].y=60;
+  assert.equal(e.action('call'),true);assert.equal(e.getPassCallStatus().reason,'offside');assert.match(e.getPassCallStatus().message,/Ofsayddasan/);
+  e.time=.5;e._thinkAI(1/60);assert.equal(e.ball.owner,owner.id);assert.equal(e.stats.passes[0],0);
+  caller.x=80;e._thinkAI(1/60);assert.equal(e.stats.passes[0],1);assert.equal(e.getPassCallStatus().status,'passed');
+});
+test('expired blocked requests provide retry feedback and cannot freeze the AI',()=>{
+  const {e}=callScenario();e.players[12].x=46;e.players[12].y=34;
+  e.action('call');e.time=3.1;e._thinkAI(1/60);
+  assert.equal(e.passRequest,null);assert.equal(e.getPassCallStatus().status,'expired');assert.equal(e.getPassCallStatus().enabled,true);
+  assert.equal(e.action('call'),true);assert.equal(e.eventLog.filter(event=>event.type==='CALL').length,2);
+});
+test('pass request feedback changes immediately when possession is lost or the ball becomes loose',()=>{
+  const {e}=callScenario();e.action('call');e.ball.owner=17;e._thinkAI(1/60);assert.equal(e.passRequest,null);assert.equal(e.getPassCallStatus().status,'opponent');
+  const second=callScenario().e;second.action('call');second.ball.owner=null;second._thinkAI(1/60);assert.equal(second.passRequest,null);assert.equal(second.getPassCallStatus().status,'loose');
+});
+test('manager and dismissed-player call controls are explicitly unavailable',()=>{
+  const manager=callScenario('manager').e;assert.equal(manager.getPassCallStatus().status,'unavailable');assert.equal(manager.action('call'),false);
+  const {e,caller}=callScenario();caller.sentOff=true;assert.equal(e.getPassCallStatus().status,'unavailable');assert.equal(e.action('call'),false);
+});
+test('a quick-match replacement remains eligible to call for the ball',()=>{
+  const {e,caller}=callScenario('quick');caller.substituted=true;caller.name='Academy 1';
+  assert.equal(e.getPassCallStatus().enabled,true);assert.equal(e.action('call'),true);
+  e.time=.4;e._thinkAI(1/60);assert.equal(e.getPassCallStatus().status,'passed');
+});
+
+for(const type of ['KICK_OFF','THROW_IN','CORNER_KICK','GOAL_KICK','DIRECT_FREE_KICK','INDIRECT_FREE_KICK','PENALTY'])test(`a pass-call input cannot take or mutate a ${type} restart`,()=>{
+  for(const mode of ['quick','player']){
+    const e=new MatchEngine({mode,position:'FWD'});
+    e._setupRestart({type,team:0,x:type==='KICK_OFF'?52.5:type==='PENALTY'?94:type==='GOAL_KICK'?5.5:40,y:type==='THROW_IN'?0:34});
+    const before={state:e.state,ball:structuredClone(e.ball),restart:structuredClone(e.restart),events:e.eventLog.length,passes:e.stats.passes[0]};
+    assert.equal(e.action('call'),false,`${mode} must reject the keyboard call action`);
+    assert.equal(e.state,before.state);assert.deepEqual(e.ball,before.ball);assert.deepEqual(e.restart,before.restart);
+    assert.equal(e.eventLog.length,before.events);assert.equal(e.stats.passes[0],before.passes);assert.equal(e.passRequest,null);
+  }
+});

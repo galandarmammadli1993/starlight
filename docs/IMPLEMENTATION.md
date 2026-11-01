@@ -22,6 +22,13 @@ The supplied specification describes an overhaul of an existing Eleven Soccer ga
 - Separate suspended games, histories and manager tactical plans persist without erasing another mode. Older version-one local saves migrate without dropping shared result history.
 - Fixed stale restart/penalty flags, invalid-input NaNs, dismissed-goalkeeper restart freezing, dead player defensive switch controls and sky-click receiver targeting.
 
+## Clear requests and human-model revision
+
+- Added a separate R / TOP İSTƏ action, a persistent Azerbaijani off-ball help panel, request countdown, distinct blocked/offside/passing/received feedback and a visible raised-hand gesture.
+- AI reacts after a brief delay, checks the pass lane and offside, and delivers a physical, interceptable pass. Requesting during any restart is rejected; repeated calls do not spam or extend the timer.
+- Replaced the old simple head/cylinder bodies with original authored 1.8m athletic models, shaped shoulders/waist, jaw/nose/ears, multi-joint legs and arms, and improved action poses. Shared geometry bounds memory. Clothing surface clearance is tested to avoid skin patches through socks.
+- Added a close sideline camera option. Models are procedural 3D figures; no external character assets were purchased or downloaded, and photorealistic people are not claimed.
+
 ## Implemented and exercised
 
 - 22 players, formations 4-3-3 / 4-4-2 / 4-2-3-1 / 3-5-2, goalkeeper and position-based roles, wing width and defensive recovery.

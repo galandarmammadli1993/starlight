@@ -1,6 +1,7 @@
 /** Side-line 3D presentation. A single mesh renders the authoritative engine ball. */
 import * as THREE from 'three';
 import { FIELD } from './rules.mjs';
+import { createHuman, updateHuman } from './human-model.mjs';
 
 const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 const KITS = {
@@ -87,16 +88,19 @@ export class PitchRenderer {
     this.ballMesh.userData.kind = 'match-ball';
     this.scene.add(this.ballMesh);
     this.ballShadow = this._shadow(.52, .34, .27);
-    this.controlRing = new THREE.Mesh(new THREE.RingGeometry(1.05, 1.18, 40), new THREE.MeshBasicMaterial({ color: '#83ffc5', transparent: true, opacity: .92, side: THREE.DoubleSide }));
+    this.controlRing = new THREE.Mesh(new THREE.RingGeometry(.62, .72, 40), new THREE.MeshBasicMaterial({ color: '#83ffc5', transparent: true, opacity: .92, side: THREE.DoubleSide }));
     this.controlRing.rotation.x = -Math.PI / 2; this.controlRing.position.y = .06;
     this.scene.add(this.controlRing);
     this.targetRing = this.controlRing.clone();
     this.targetRing.material = new THREE.MeshBasicMaterial({ color: '#ffdf76', transparent: true, opacity: .85, side: THREE.DoubleSide });
     this.scene.add(this.targetRing);
-    this.controlArrow = new THREE.Mesh(new THREE.ConeGeometry(.34, .55, 3), new THREE.MeshBasicMaterial({ color: '#8dffcb' }));
+    this.controlArrow = new THREE.Mesh(new THREE.ConeGeometry(.18, .3, 3), new THREE.MeshBasicMaterial({ color: '#8dffcb' }));
     this.controlArrow.rotation.z = Math.PI; this.scene.add(this.controlArrow);
     this.offsideLine = this._line([[0, .065, 0], [0, .065, 68]], '#f6b451', .85);
     this.offsideLine.visible = false;
+    this.callOwnerRing = new THREE.Mesh(new THREE.RingGeometry(.7,.8,32),new THREE.MeshBasicMaterial({color:'#69d8ff',transparent:true,opacity:.9,side:THREE.DoubleSide}));
+    this.callOwnerRing.rotation.x=-Math.PI/2;this.callOwnerRing.position.y=.075;this.callOwnerRing.visible=false;this.scene.add(this.callOwnerRing);
+    this.callStatusSprite=null;this.callStatusKey='';
     this.referee = this._createHuman({ id: 99, role: 'REF', team: -1, number: '' }, KITS.mint);
     this.scene.add(this.referee.group);
   }
@@ -218,33 +222,11 @@ export class PitchRenderer {
     this.scene.add(shadow); return shadow;
   }
   _createHuman(player, kit) {
-    const group = new THREE.Group();
-    const skin = player.role === 'REF' ? '#bd8d66' : SKIN[player.id % SKIN.length];
-    const shirt = player.role === 'GK' ? player.team === 0 ? '#ad8edf' : '#72afcf' : player.role === 'REF' ? '#eddf5d' : kit.shirt;
-    const jerseyMaterial = this._material(shirt);
-    const shortsMaterial = this._material(player.role === 'REF' ? '#25343b' : kit.shorts);
-    const torso = new THREE.Mesh(new THREE.CylinderGeometry(.29, .23, .65, 7), jerseyMaterial);
-    torso.position.y = 1.27; group.add(torso);
-    const shoulders = new THREE.Mesh(new THREE.BoxGeometry(.72, .2, .34), jerseyMaterial);
-    shoulders.position.y = 1.51; group.add(shoulders);
-    const waist = new THREE.Mesh(new THREE.BoxGeometry(.45, .3, .32), shortsMaterial); waist.position.y = .86; group.add(waist);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(.205, 10, 8), this._material(skin)); head.position.y = 1.94; head.scale.y = 1.12; group.add(head);
-    const hair = new THREE.Mesh(new THREE.SphereGeometry(.21, 8, 5, 0, TAU, 0, Math.PI * .47), this._material(player.id % 4 ? '#352d27' : '#6a4b2e')); hair.position.y = 2; group.add(hair);
-    const limbs = [];
-    for (const side of [-1, 1]) {
-      const legPivot = new THREE.Group(); legPivot.position.set(side * .14, .79, 0); group.add(legPivot);
-      this._cylinder(.095, .39, skin, 0, -.2, 0, legPivot);
-      this._cylinder(.088, .27, shirt, 0, -.51, 0, legPivot);
-      this._box(.19, .13, .31, '#18262a', 0, -.69, -.075, legPivot);
-      const armPivot = new THREE.Group(); armPivot.position.set(side * .4, 1.55, 0); group.add(armPivot);
-      this._cylinder(.087, .23, shirt, 0, -.11, 0, armPivot);
-      this._cylinder(.065, .38, skin, 0, -.37, 0, armPivot);
-      limbs.push({ leg: legPivot, arm: armPivot, side });
-    }
-    const shadow = this._shadow(.62, .42, .25);
-    const label = this._label(player.number);
-    label.position.y = 2.72; group.add(label);
-    return { group, torso, shoulders, waist, limbs, shadow, label, number: player.number, kit: shirt };
+    return createHuman(player,kit,{
+      material: color=>this._material(color),
+      label: value=>this._label(value),
+      shadow: (w,h,opacity)=>this._shadow(w,h,opacity),
+    });
   }
   _label(value) {
     const canvas = document.createElement('canvas'); canvas.width = 64; canvas.height = 40;
@@ -252,7 +234,7 @@ export class PitchRenderer {
     c.lineWidth = 4; c.strokeStyle = '#102a27'; c.strokeText(String(value), 32, 21); c.fillStyle = '#f3fff1'; c.fillText(String(value), 32, 21);
     const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace;
     const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false }));
-    sprite.scale.set(1.4, .875, 1); return sprite;
+    sprite.scale.set(.7, .4375, 1); return sprite;
   }
   _ballTexture() {
     const canvas = document.createElement('canvas'); canvas.width = 256; canvas.height = 128;
@@ -277,19 +259,20 @@ export class PitchRenderer {
     this._updateCamera(null, 1, true);
   }
   _updateCamera(engine, dt, instant = false) {
-    const playing = engine && !['PRE_MATCH', 'KICK_OFF_SETUP'].includes(engine.state);
-    const ball = engine?.ball;
-    const wide = !playing || engine?.options?.mode === 'manager';
-    const tx = wide ? 52.5 : clamp(52.5 + ((ball?.x ?? 52.5) - 52.5) * .58, 24, 81);
-    const tz = wide ? 30 : clamp(30 + ((ball?.y ?? 34) - 34) * .23, 24, 40);
-    const blend = instant ? 1 : 1 - Math.exp(-Math.max(dt || .016, .001) * 3.3);
-    this.cameraTarget.lerp(new THREE.Vector3(tx, 0, tz), blend);
-    // Low enough to see upright bodies and stadium depth; never the old top-down view.
-    const span = wide ? 151 : this.width < 650 ? 94 : 113;
-    const distance = Math.max(66, span / (2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2)) * Math.max(.7, this.camera.aspect)));
-    const elevation = .48;
-    this.camera.position.set(this.cameraTarget.x + (wide ? 0 : 3), distance * elevation, this.cameraTarget.z + distance * Math.sqrt(1 - elevation * elevation));
-    this.camera.lookAt(this.cameraTarget); this.camera.updateMatrixWorld();
+    const playing=engine&&!['PRE_MATCH','KICK_OFF_SETUP'].includes(engine.state);
+    const ball=engine?.ball,player=engine?.players?.find(p=>p.id===engine.controlled&&!p.sentOff);
+    const wide=!playing||engine?.options?.mode==='manager';
+    const close=!wide&&engine?.cameraMode==='close'&&player;
+    const separation=player&&ball?Math.hypot(player.x-ball.x,player.y-ball.y):0;
+    const tx=wide?52.5:close?clamp(player.x*.65+(ball?.x??player.x)*.35,14,91):clamp(52.5+((ball?.x??52.5)-52.5)*.58,24,81);
+    const tz=wide?30:close?clamp(player.y*.65+(ball?.y??player.y)*.35,12,56):clamp(30+((ball?.y??34)-34)*.23,24,40);
+    const blend=instant?1:1-Math.exp(-Math.max(dt||.016,.001)*3.3);
+    this.cameraTarget.lerp(new THREE.Vector3(tx,0,tz),blend);
+    const span=wide?151:close?clamp(48+separation*.8,48,100):this.width<650?94:113;
+    const distance=Math.max(close?41:66,span/(2*Math.tan(THREE.MathUtils.degToRad(this.camera.fov/2))*Math.max(.7,this.camera.aspect)));
+    const elevation=close?.4:.48;
+    this.camera.position.set(this.cameraTarget.x+(wide?0:3),distance*elevation,this.cameraTarget.z+distance*Math.sqrt(1-elevation*elevation));
+    this.camera.lookAt(this.cameraTarget);this.camera.updateMatrixWorld();
   }
   worldToScreen(x, y, z = 0) {
     if (this.fallback) return this._compatProjection(x, y, z);
@@ -311,7 +294,7 @@ export class PitchRenderer {
 
   render(engine, delta = 0) {
     if (!engine || this.width < 2) return;
-    this.time += Math.min(delta || 0, .1);
+    if(engine.state!=='PAUSED')this.time += Math.min(delta || 0, .1);
     if (this.fallback) { this._renderCompatibility(engine); return; }
     this._updateCamera(engine, delta);
     for (const player of engine.players) {
@@ -324,27 +307,20 @@ export class PitchRenderer {
       const speed = Math.hypot(player.vx || 0, player.vy || 0);
       const angle = speed > .2 ? Math.atan2(-player.vx, -player.vy) : Math.atan2(-(player.faceX ?? engine.directions[player.team]), -(player.faceY || 0));
       model.group.rotation.y = angle;
-      const phase = this.time * (speed > 5 ? 12 : 9) + player.id * 1.6;
-      const amplitude = Math.min(.8, speed * .11);
-      for (const limb of model.limbs) {
-        limb.leg.rotation.x = Math.sin(phase) * amplitude * limb.side;
-        limb.arm.rotation.x = -Math.sin(phase) * amplitude * .7 * limb.side;
-        limb.arm.rotation.z = -limb.side * .12;
-        if (player.animation === 'throw' && player.animationTime > 0) { limb.arm.rotation.x = Math.PI * .82; limb.arm.rotation.z = -limb.side * .2; }
-        if (['shoot', 'pass', 'cross'].includes(player.animation) && player.animationTime > 0 && limb.side === 1) limb.leg.rotation.x = -.85;
-      }
-      model.group.position.y = Math.abs(Math.sin(phase)) * Math.min(.09, speed * .012);
+      updateHuman(model,player,this.time,engine);
       model.shadow.position.set(player.x + .15, .045, player.y + .12);
-      if (model.number !== player.number) { model.label.material.map.dispose(); model.label.material.dispose(); model.group.remove(model.label); model.label = this._label(player.number); model.label.position.y = 2.72; model.group.add(model.label); model.number = player.number; }
-      model.label.visible = player.id === engine.controlled || player.id === engine.selectedTarget || this.width > 650;
+      if (model.number !== player.number) { model.label.material.map.dispose(); model.label.material.dispose(); model.group.remove(model.label); model.label = this._label(player.number); model.label.position.y = 2.16; model.group.add(model.label); model.number = player.number; }
+      model.label.visible = player.id === engine.controlled || player.id === engine.selectedTarget || (this.width > 650 && engine.cameraMode !== 'close');
       const shirt = player.role === 'GK' ? player.team === 0 ? '#ad8edf' : '#72afcf' : kit.shirt;
-      model.torso.material = this._material(shirt); model.shoulders.material = this._material(shirt); model.waist.material = this._material(kit.shorts);
+      for(const part of model.shirtParts)part.material=this._material(shirt);
+      for(const part of model.shortParts)part.material=this._material(kit.shorts);
+      model.collar.material=this._material(kit.trim);
     }
     const controlled = engine.players.find(p => p.id === engine.controlled && !p.sentOff);
     const canControl = engine.options?.mode !== 'manager';
     this.controlRing.visible = !!controlled && canControl;
     this.controlArrow.visible = !!controlled && canControl;
-    if (controlled) { this.controlRing.position.set(controlled.x, .07, controlled.y); this.controlArrow.position.set(controlled.x, 3.4, controlled.y); }
+    if (controlled) { this.controlRing.position.set(controlled.x, .07, controlled.y); this.controlArrow.position.set(controlled.x, 2.65, controlled.y); }
     const selected = engine.players.find(p => p.id === engine.selectedTarget && !p.sentOff);
     this.targetRing.visible = !!selected && canControl;
     if (selected) this.targetRing.position.set(selected.x, .07, selected.y);
@@ -361,8 +337,28 @@ export class PitchRenderer {
     this.referee.label.visible = false;
     this.offsideLine.visible = !!engine.debug && !!engine.offsideSnapshot;
     if (this.offsideLine.visible) this.offsideLine.position.x = engine.offsideSnapshot.line;
+    this._renderCallStatus(engine,controlled);
     this.renderer.render(this.scene, this.camera);
     this._debug(engine);
+  }
+  _renderCallStatus(engine,controlled){
+    const call=engine.getPassCallStatus?.()??engine.passCall;
+    const ownPlayer=engine.options?.mode==='player'&&controlled;
+    const labels={waiting:['ÖTÜRMƏ GÖZLƏNİR','#c4ef96'],blocked:['BOŞ YERƏ ÇIX','#f5cc79'],passed:['TOP SƏNƏ GƏLİR','#a6e2ff'],received:['TOP SƏNDƏ','#c4ef96']};
+    const selected=ownPlayer&&call?(labels[call.status]??(call.enabled?['TOP İSTƏ · R','#c4ef96']:null)):null;
+    if(!selected){if(this.callStatusSprite)this.callStatusSprite.visible=false;this.callOwnerRing.visible=false;return;}
+    const [message,color]=selected,key=message+color;
+    if(this.callStatusKey!==key){
+      if(this.callStatusSprite){this.callStatusSprite.material.map.dispose();this.callStatusSprite.material.dispose();this.scene.remove(this.callStatusSprite);}
+      const canvas=document.createElement('canvas');canvas.width=512;canvas.height=80;
+      const c=canvas.getContext('2d');c.fillStyle='#14251eeb';c.beginPath();c.roundRect(3,3,506,74,14);c.fill();c.strokeStyle=color;c.lineWidth=3;c.stroke();c.fillStyle=color;c.font='700 28px Arial';c.textAlign='center';c.textBaseline='middle';c.fillText(message,256,41);
+      const texture=new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;
+      this.callStatusSprite=new THREE.Sprite(new THREE.SpriteMaterial({map:texture,transparent:true,depthTest:false,depthWrite:false}));this.callStatusSprite.scale.set(8,1.25,1);this.callStatusSprite.renderOrder=20;this.scene.add(this.callStatusSprite);this.callStatusKey=key;
+    }
+    this.callStatusSprite.visible=true;this.callStatusSprite.position.set(controlled.x,3.5,controlled.y);
+    const owner=engine.players.find(p=>p.id===call.ownerId&&!p.sentOff);
+    this.callOwnerRing.visible=!!owner&&['waiting','blocked'].includes(call.status);
+    if(owner)this.callOwnerRing.position.set(owner.x,.075,owner.y);
   }
   _debug(engine) {
     if (!engine.debug) { if (this.debugNode) this.debugNode.hidden = true; return; }
