@@ -8,10 +8,19 @@ The supplied specification describes an overhaul of an existing Eleven Soccer ga
 | --- | --- |
 | src/game/rules.mjs | Central boundary/restart, offside, clock and referee decisions |
 | src/game/engine.mjs | Match state machine, fixed-step physics, movement, passes/shots, AI, goalkeepers, restart transitions |
-| src/game/renderer.mjs | Responsive full-pitch Canvas2D view and pointer/world coordinate mapping |
+| src/game/renderer.mjs | Three.js sideline stadium and upright player models, one ball mesh, raycast receiver picking and 2D side-view fallback |
 | src/game/storage.mjs | Validated versioned saves, resumable matches, once-only career records |
 | src/game/app.mjs | One animation loop, keyboard/multi-touch input, menus, settings and match UI |
 | src/pages/index.astro | Accessible application shell |
+
+## Side-view and career revision
+
+- Replaced the overhead renderer with actual Three.js geometry and a near-sideline perspective camera, upright animated humanoids, crowd terraces, 3D goal frames/netting, lighting and ball-follow tracking. This is a browser 3D implementation, not a Unity project or licensed clone of a commercial title.
+- Removed the old ball trail and its residual graphics. A single named match-ball mesh is updated from one stable engine ball object. Restart and goal transitions do not create additional ball meshes.
+- Split player life (daily training, energy, recovery, wallet/salary, reputation, own goals) and manager club decisions (budget, board trust, team fitness/morale, coaching, scouting, youth). Attributes affect actual engine movement, passing, shooting and defending.
+- Manager input cannot directly control any footballer. Player career cannot switch identity or change team tactics/substitutions; AI teammates make their own decisions and respond to delayed, lane-checked pass calls.
+- Separate suspended games, histories and manager tactical plans persist without erasing another mode. Older version-one local saves migrate without dropping shared result history.
+- Fixed stale restart/penalty flags, invalid-input NaNs, dismissed-goalkeeper restart freezing, dead player defensive switch controls and sky-click receiver targeting.
 
 ## Implemented and exercised
 
@@ -30,7 +39,7 @@ Node tests exercise the actual rules and engine. Browser tests additionally exer
 
 ## Limits of this browser edition
 
-The original AAA-level specification is broader than this implementation. This release does not implement a skeletal animation/contact model; all possible handball, holding, obstruction or goalkeeper-view interpretations; competition-specific injury/treatment/substitution-return procedures; advantage recall; knockout extra time or penalty shootouts; replay/VAR; season scheduling, transfers or cloud/multi-device saves. Goalkeepers use positional catches/blocks rather than motion-captured dive animations. Outfield contact and body-part offside are simplified to the player model geometry. Restart-delay judgement uses an observable idle-duration heuristic rather than a full delay-intent model.
+The original AAA-level specification is broader than this implementation. This release does not implement a skeletal animation/contact model; all possible handball, holding, obstruction or goalkeeper-view interpretations; competition-specific injury/treatment/substitution-return procedures; advantage recall; knockout extra time or penalty shootouts; replay/VAR; season scheduling, a transfer market or cloud/multi-device saves. Goalkeepers use positional catches/blocks rather than motion-captured dive animations. Outfield contact and body-part offside are simplified to the player model geometry. Restart-delay judgement uses an observable idle-duration heuristic rather than a full delay-intent model.
 
 This is an Android-compatible browser game, not a signed Android application. A native APK needs a separate packaging workflow.
 

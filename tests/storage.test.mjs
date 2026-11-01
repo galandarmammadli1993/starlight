@@ -107,7 +107,7 @@ test('restart taker must belong to the awarded team and remain eligible', () => 
   assert.equal(restoreMatch(snapshot), null);
 });
 test('out-of-play pending restart survives Main Menu save/load', () => {
-  const storage = memoryStorage(), save = loadSave(storage), engine = careerEngine();
+  const storage = memoryStorage(), save = loadSave(storage), engine = careerEngine('quick');
   engine.continueMatch(); engine._stop({ type: 'CORNER_KICK', team: 1, x: 0, y: 68 });
   engine.pause(); save.suspended = captureMatch(engine); assert.equal(saveData(save, storage), true);
   const restored = restoreMatch(loadSave(storage).suspended);
@@ -164,7 +164,7 @@ test('negative career fields and malformed suspended data cannot corrupt progres
 });
 for (const [half, event] of [[1, 'HALF_TIME'], [2, 'FULL_TIME']]) {
   test(`${event} stays deferred until the saved in-progress penalty finishes`, () => {
-    const storage = memoryStorage(), save = loadSave(storage), engine = careerEngine();
+    const storage = memoryStorage(), save = loadSave(storage), engine = careerEngine('quick');
     engine._setupRestart({ type: 'PENALTY', team: 0, x: 94, y: 34 });
     engine.clock.half = half; engine.clock.elapsed = 2759.99; engine.clock.addedSeconds = 60;
     engine.step(.1);
@@ -187,4 +187,55 @@ test('invalid penalty extension fields are normalized safely', () => {
   snapshot.penaltyInProgress = 'true'; snapshot.deferredClockEvent = 'PAUSED';
   const restored = restoreMatch(snapshot);
   assert.equal(restored.penaltyInProgress, false); assert.equal(restored.deferredClockEvent, null);
+});
+test('independent player and manager career progress survives browser storage', () => {
+  const storage = memoryStorage(), save = loadSave(storage);
+  save.careers.player.day = 12;save.careers.player.skills.shooting = 81;save.careers.manager.budget = 23000;save.careers.manager.trainingFocus = 'attack';
+  save.careers.manager.formation = '3-5-2';save.careers.manager.tactic = 'press';
+  assert.equal(saveData(save, storage), true);
+  const loaded = loadSave(storage);
+  assert.equal(loaded.careers.player.day, 12);assert.equal(loaded.careers.player.skills.shooting, 81);
+  assert.equal(loaded.careers.manager.budget, 23000);assert.equal(loaded.careers.manager.trainingFocus, 'attack');
+  assert.equal(loaded.careers.manager.formation, '3-5-2');assert.equal(loaded.careers.manager.tactic, 'press');
+});
+test('old saves migrate mode-tagged history and suspended match without resetting progress', () => {
+  const engine = careerEngine('player'), snapshot = captureMatch(engine);
+  const storage = memoryStorage(JSON.stringify({ version: 1, career: { played: 8, goals: 15, results: [
+    { id: 'old-player', mode: 'player', score: [2, 1], result: 'win' },
+    { id: 'old-manager', mode: 'manager', score: [0, 1], result: 'loss' },
+  ] }, suspended: snapshot }));
+  const save = loadSave(storage);
+  assert.equal(save.career.played, 8);assert.equal(save.career.goals, 15);
+  assert.equal(save.careers.player.appearances, 1);assert.equal(save.careers.manager.record.lost, 1);
+  assert.equal(save.suspendedByMode.player.matchId, engine.matchId);assert.equal(save.suspendedByMode.manager, null);
+});
+test('player and manager unfinished matches persist independently with their real options', () => {
+  const storage = memoryStorage(), save = loadSave(storage);
+  const player = careerEngine('player');player.matchId = 'player-save';player.score = [2, 1];
+  const manager = careerEngine('manager');manager.matchId = 'manager-save';manager.score = [0, 3];
+  save.suspendedByMode.player = captureMatch(player);save.suspendedByMode.manager = captureMatch(manager);
+  save.suspended = save.suspendedByMode.manager;
+  assert.equal(saveData(save, storage), true);const loaded = loadSave(storage);
+  assert.equal(loaded.suspendedByMode.player.matchId, 'player-save');assert.deepEqual(loaded.suspendedByMode.player.score, [2, 1]);
+  assert.equal(loaded.suspendedByMode.manager.matchId, 'manager-save');assert.deepEqual(loaded.suspendedByMode.manager.score, [0, 3]);
+  assert.equal(loaded.suspendedByMode.quick, null);
+});
+test('wrong-mode suspended snapshots are rejected instead of crossing career identity', () => {
+  const storage = memoryStorage(), save = loadSave(storage);
+  save.suspendedByMode.manager = captureMatch(careerEngine('player'));saveData(save, storage);
+  assert.equal(loadSave(storage).suspendedByMode.manager, null);
+});
+test('result updates the matching new career once and preserves the legacy aggregate', () => {
+  const storage = memoryStorage(), save = loadSave(storage), e = careerEngine('player');e.state = 'FULL_TIME';e.score = [3, 1];e.playerGoals = { [e.careerPlayer]: 2 };
+  assert.equal(recordResult(save, e), true);assert.equal(save.careers.player.appearances, 1);assert.equal(save.careers.player.goals, 2);
+  assert.equal(save.careers.manager.record.played, 0);assert.equal(save.career.goals, 3);
+  saveData(save, storage);const reload = loadSave(storage), duplicate = careerEngine('player');duplicate.state = 'FULL_TIME';
+  assert.equal(recordResult(reload, duplicate), false);assert.equal(reload.careers.player.appearances, 1);
+});
+test('live attribute options and per-player goals survive capture and restore', () => {
+  const engine = new MatchEngine({ mode: 'player', playerAttributes: { pace: 73, passing: 84, shooting: 90, energy: 55 }, teamAttributes: { fitness: 88, defending: 82 } });
+  engine.playerGoals = { 6: 2, 11: 1 };
+  const restored = restoreMatch(captureMatch(engine));
+  assert.equal(restored.options.playerAttributes.shooting, 90);assert.equal(restored.options.playerAttributes.energy, 55);
+  assert.equal(restored.options.teamAttributes.fitness, 88);assert.deepEqual(restored.playerGoals, engine.playerGoals);
 });

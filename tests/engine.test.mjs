@@ -184,7 +184,7 @@ test('defending a penalty allows manual goalkeeper lateral movement on the line'
 test('player career preserves chosen role and customized identity through formation changes',()=>{
   for(const position of ['DEF','MID','FWD']){
     const e=new MatchEngine({mode:'player',position,formation:'4-3-3'});const id=e.controlled;const player=e.players[id];player.name='Araz';player.number=77;
-    for(const formation of ['4-4-2','4-2-3-1','3-5-2']){e.setFormation(formation);assert.equal(e.controlled,id);assert.equal(e.careerPlayer,id);assert.equal(player.role,position);assert.equal(player.name,'Araz');assert.equal(player.number,77);}
+    for(const formation of ['4-4-2','4-2-3-1','3-5-2']){e.formation=formation;e._assignFormation();assert.equal(e.controlled,id);assert.equal(e.careerPlayer,id);assert.equal(player.role,position);assert.equal(player.name,'Araz');assert.equal(player.number,77);}
   }
 });
 test('pausing active play does not manufacture a substitution stoppage',()=>{
@@ -194,4 +194,91 @@ test('pausing active play does not manufacture a substitution stoppage',()=>{
 test('a half-ending whistle is deferred until an awarded penalty is completed',()=>{
   const e=field();e._setupRestart({type:'PENALTY',team:0,x:94,y:34});e.clock.elapsed=2759.99;e.clock.addedSeconds=60;e.step(.1);assert.equal(e.state,'PENALTY_SETUP');assert.equal(e.deferredClockEvent,'HALF_TIME');e.action('shoot');assert.equal(e.state,'IN_PLAY');
   e.ball.x=104.9;e.ball.y=34;e.ball.z=1;e.ball.vx=40;e.ball.vy=e.ball.vz=0;e.step(1/60);assert.equal(e.state,'HALF_TIME');assert.deepEqual(e.score,[1,0]);assert.equal(e.deferredClockEvent,null);
+});
+
+
+test('manager cannot operate individual players through direct action or target APIs',()=>{
+  const e=field({mode:'manager'});possess(e,6,45,34);const ball={...e.ball,lastTouch:{...e.ball.lastTouch}},controlled=e.controlled;
+  for(const kind of ['switch','pass','through','cross','shoot','clear','oneTwo','tackle','press','skill','call','restart'])assert.equal(e.action(kind),false,kind);
+  assert.equal(e.selectTarget(8),false);assert.equal(e.selectedTarget,null);assert.equal(e.controlled,controlled);assert.deepEqual(e.ball,ball);assert.deepEqual(e.stats.shots,[0,0]);
+  assert.equal(e.setTactic('press'),true);assert.equal(e.setFormation('4-4-2'),true);
+});
+test('manager input cannot steer or sprint any member of the AI team',()=>{
+  const a=new MatchEngine({mode:'manager'}),b=new MatchEngine({mode:'manager'});
+  for(let i=0;i<240;i++){a.step(1/60,{x:1,y:-1,sprint:true,press:true});b.step(1/60);}
+  assert.deepEqual(a.players.map(p=>[p.x,p.y,p.vx,p.vy]),b.players.map(p=>[p.x,p.y,p.vx,p.vy]));assert.deepEqual(a.ball,b.ball);
+});
+test('player career cannot change tactics, formation or substitute teammates',()=>{
+  const e=new MatchEngine({mode:'player',position:'MID'}),shape=e.formation;
+  assert.equal(e.setFormation('3-5-2'),false);assert.equal(e.setTactic('press'),false);assert.equal(e.substitute(2),false);assert.equal(e.formation,shape);assert.equal(e.tactic,'balanced');assert.equal(e.substitutions,0);
+});
+test('player career cannot remotely take another teammate restart and AI resumes it',()=>{
+  const e=new MatchEngine({mode:'player',position:'MID'});const id=e.careerPlayer;
+  for(const type of ['KICK_OFF','THROW_IN','CORNER_KICK','GOAL_KICK','DIRECT_FREE_KICK','INDIRECT_FREE_KICK','PENALTY']){
+    e.players[id].x=50;e.players[id].y=60;
+    e._setupRestart({type,team:0,x:type==='PENALTY'?94:type==='KICK_OFF'?52.5:5.5,y:type==='THROW_IN'?0:34});
+    assert.notEqual(e.restart.takerId,id);assert.equal(e.action('shoot'),false);assert.equal(e.continueMatch(),false);
+    advance(e,1.9);assert.equal(e.state,'IN_PLAY',type);assert.equal(e.controlled,id);
+  }
+});
+test('player can perform own restart while retaining identity',()=>{
+  const e=new MatchEngine({mode:'player',position:'MID'});const p=e.controlledPlayer;p.x=40;p.y=0;
+  e._setupRestart({type:'THROW_IN',team:0,x:40,y:0});assert.equal(e.restart.takerId,p.id);assert.equal(e.action('pass'),true);assert.equal(e.state,'IN_PLAY');assert.equal(e.controlled,p.id);
+});
+test('calling for the ball is a request resolved by AI, not direct remote kicking',()=>{
+  const e=field({mode:'player',position:'MID'});const id=e.careerPlayer,caller=e.players[id],owner=e.players[8];
+  caller.x=40;caller.y=34;owner.x=53;owner.y=34;owner.timer=.4;
+  for(const p of e.players)if(p.id!==id&&p.id!==owner.id){p.x=p.team?95:8;p.y=3+p.number*5;}
+  e.controlled=id;e.ball={...e.ball,x:53.4,y:34,owner:owner.id,lastTouch:{team:0,playerId:owner.id}};
+  const before={...e.ball};assert.equal(e.action('call'),true);assert.deepEqual(e.ball,before);assert.equal(e.passRequest.playerId,id);assert.equal(e.stats.passes[0],0);
+  advance(e,.5);assert.ok(e.stats.passes[0]>0);assert.equal(e.controlled,id);assert.equal(e.ball.lastTouch.playerId,owner.id);assert.ok(e.ball.vx<0);
+});
+test('a requested pass can be declined when an opponent blocks the lane',()=>{
+  const e=field({mode:'player',position:'MID'});const id=e.careerPlayer,caller=e.players[id],owner=e.players[8];caller.x=40;caller.y=34;owner.x=53;owner.y=34;owner.timer=20;
+  e.players[12].x=46;e.players[12].y=34;e.controlled=id;e.ball={...e.ball,x:53.4,y:34,owner:owner.id,lastTouch:{team:0,playerId:owner.id}};
+  assert.equal(e.action('pass'),true);assert.equal(e.ball.owner,owner.id);assert.equal(e.stats.passes[0],0);assert.equal(e.passRequest.playerId,id);
+});
+test('there is one stable authoritative ball reference through all restart setups',()=>{
+  const e=new MatchEngine(),ball=e.ball;
+  for(const type of ['THROW_IN','CORNER_KICK','GOAL_KICK','DIRECT_FREE_KICK','PENALTY','KICK_OFF']){
+    e._setupRestart({type,team:0,x:type==='KICK_OFF'?52.5:30,y:34});assert.strictEqual(e.ball,ball);assert.equal(e.pendingRestart,null);assert.equal(e.action('pass'),true);assert.strictEqual(e.ball,ball);
+  }
+  assert.equal(Object.values(e).filter(v=>v===ball).length,1);
+});
+test('invalid controls, power and targets do not inject NaNs into the simulation',()=>{
+  const e=field();possess(e,6,45,34);e.step(.1,{x:NaN,y:Infinity,sprint:true});assert.ok(e.players.every(p=>Number.isFinite(p.x)&&Number.isFinite(p.y)));
+  assert.equal(e.action('not-a-real-action'),false);assert.equal(e.action('pass',.6,{x:NaN,y:34}),false);assert.equal(e.action('pass',NaN),true);
+  assert.ok([e.ball.vx,e.ball.vy,e.ball.vz].every(Number.isFinite));
+});
+test('valid goals count the individual scorer, while own goals do not credit a player goal',()=>{
+  const e=field();e.ball={...e.ball,x:104.9,y:34,z:1,vx:40,lastTouch:{team:0,playerId:8}};e.step(1/60);assert.equal(e.playerGoals[8],1);assert.equal(e.eventLog[0].playerId,8);assert.equal(e.eventLog[0].team,0);
+  e._setupRestart({type:'KICK_OFF',team:0,x:52.5,y:34});e.action('pass');e.restartOrigin=null;e.ball={...e.ball,x:.1,y:34,z:1,vx:-40,owner:null,lastTouch:{team:0,playerId:2}};e.step(1/60);
+  assert.deepEqual(e.score,[1,1]);assert.equal(e.playerGoals[2],undefined);assert.equal(e.eventLog[0].playerId,null);
+});
+test('player career energy and pace attributes alter the actual controlled footballer',()=>{
+  const slow=field({mode:'player',position:'MID',playerAttributes:{pace:30,energy:35}}),fast=field({mode:'player',position:'MID',playerAttributes:{pace:95,energy:90}});
+  assert.equal(slow.controlledPlayer.stamina,35);assert.equal(fast.controlledPlayer.stamina,90);
+  for(const e of [slow,fast]){e.controlledPlayer.x=40;e.controlledPlayer.y=34;e.ball.x=90;e.ball.y=65;}
+  advance(slow,.5,{x:1,sprint:true});advance(fast,.5,{x:1,sprint:true});assert.ok(fast.controlledPlayer.x>slow.controlledPlayer.x+.4);
+});
+test('manager team training changes real passing and shooting speed',()=>{
+  const low=field({mode:'manager',teamAttributes:{passing:30,shooting:30}}),high=field({mode:'manager',teamAttributes:{passing:95,shooting:95}});
+  for(const e of [low,high]){const p=possess(e,8,80,34);e._kick(p,'shoot',.7);}
+  assert.ok(Math.hypot(high.ball.vx,high.ball.vy)>Math.hypot(low.ball.vx,low.ball.vy)+3);
+});
+test('ending a period clears stale restarts, penalty state and possession references',()=>{
+  const e=field();e.restartOrigin={type:'PENALTY',team:0,untouched:true};e.pendingRestart={type:'PENALTY',team:0,x:94,y:34};e.passRequest={playerId:5,ownerId:8,expires:100};e.offside={candidates:[8]};e.selectedTarget=8;e._endPeriod('FULL_TIME');
+  for(const key of ['restart','pendingRestart','restartOrigin','offside','selectedTarget','passRequest','keeperHold'])assert.equal(e[key],null,key);assert.equal(e.ball.owner,null);assert.equal(e.penaltyInProgress,false);assert.equal(e.deferredClockEvent,null);
+});
+
+
+test('player receiver selection cannot redirect an AI teammate without a pass request',()=>{
+  const e=field({mode:'player',position:'MID'}),id=e.careerPlayer,owner=e.players[8];owner.x=55;owner.y=34;e.players[2].x=56;e.players[2].y=35;e.players[id].x=40;e.players[id].y=34;
+  e.selectTarget(2);const selected=e._chooseTarget(owner,'pass');e.selectedTarget=null;const automatic=e._chooseTarget(owner,'pass');assert.equal(selected.id,automatic.id);
+});
+test('a dismissed goalkeeper cannot become the taker and freeze a goal kick',()=>{
+  const e=field();e.players[0].sentOff=true;e._setupRestart({type:'GOAL_KICK',team:0,x:5.5,y:34});assert.notEqual(e.restart.takerId,0);assert.equal(e.action('pass'),true);assert.equal(e.state,'IN_PLAY');assert.equal(e.ball.owner,null);assert.ok(Math.hypot(e.ball.vx,e.ball.vy)>0);
+});
+test('invalid restart coordinates do not corrupt the live ball or state',()=>{
+  const e=field(),before={...e.ball};assert.equal(e._setupRestart({type:'THROW_IN',team:0,x:NaN,y:0}),false);assert.deepEqual(e.ball,before);assert.equal(e.state,'IN_PLAY');
 });

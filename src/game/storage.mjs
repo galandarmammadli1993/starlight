@@ -1,4 +1,5 @@
 import { MatchEngine } from './engine.mjs';
+import { ensureCareers, applyCareerMatch } from './career.mjs';
 
 export const SAVE_KEY = 'footba11-heroes-save-v1';
 export const DEFAULT_PROFILE = Object.freeze({
@@ -66,6 +67,11 @@ function restartOf(value) {
     y: num(value.crossing.y, 0, -1000, 1000), z: num(value.crossing.z, .11, 0, 1000) };
   return r;
 }
+function attributesOf(value) {
+  if (!isObject(value)) return undefined;
+  return Object.fromEntries(['pace', 'passing', 'shooting', 'defending', 'fitness', 'energy', 'morale']
+    .filter(key => finite(value[key], 0, 100)).map(key => [key, value[key]]));
+}
 function sanitizeSnapshot(value) {
   if (!isObject(value) || value.version !== 1 || !STATES.includes(value.state)
     || !Array.isArray(value.players) || value.players.length !== 22
@@ -97,6 +103,8 @@ function sanitizeSnapshot(value) {
     mode: choose(value.options?.mode, ['quick', 'player', 'manager'], 'quick'),
     position: choose(value.options?.position, ['DEF', 'MID', 'FWD'], 'MID'),
     formation: choose(value.options?.formation, FORMATIONS, '4-3-3'), difficulty: 'normal' };
+  if (attributesOf(value.options?.playerAttributes)) options.playerAttributes = attributesOf(value.options.playerAttributes);
+  if (attributesOf(value.options?.teamAttributes)) options.teamAttributes = attributesOf(value.options.teamAttributes);
   const snapshot = {
     version: 1, matchId: text(value.matchId, '', 100) || identifier(), resultRecorded: !!value.resultRecorded,
     options, players,
@@ -132,6 +140,8 @@ function sanitizeSnapshot(value) {
     dribbleTimer: num(value.dribbleTimer, 0, -100, 100), delayWarned: !!value.delayWarned,
     penaltyInProgress: value.penaltyInProgress === true,
     deferredClockEvent: choose(value.deferredClockEvent, ['HALF_TIME', 'FULL_TIME'], null),
+    playerGoals: Object.fromEntries(Object.entries(isObject(value.playerGoals) ? value.playerGoals : {})
+      .filter(([id, count]) => playerId(Number(id)) && Number.isInteger(count) && count >= 0 && count < 10000)),
   };
   for (const stat of ['shots', 'passes', 'completed', 'possession', 'corners', 'fouls', 'offsides']) snapshot.stats[stat] = two(value.stats?.[stat]);
   const origin = value.restartOrigin;
@@ -156,7 +166,17 @@ function sanitizeSnapshot(value) {
 }
 
 function emptySave() {
-  return { version: 1, profile: { ...DEFAULT_PROFILE }, career: careerOf(null), suspended: null };
+  const save = { version: 1, profile: { ...DEFAULT_PROFILE }, career: careerOf(null), suspended: null,
+    suspendedByMode: { quick: null, player: null, manager: null } };
+  ensureCareers(save);return save;
+}
+function suspendedModes(value, legacy) {
+  const snapshots = Object.fromEntries(['quick', 'player', 'manager'].map(mode => {
+    const snapshot = sanitizeSnapshot(value?.[mode]);
+    return [mode, snapshot?.options.mode === mode ? snapshot : null];
+  }));
+  if (!isObject(value) && legacy && ['quick', 'player', 'manager'].includes(legacy.options.mode)) snapshots[legacy.options.mode] = legacy;
+  return snapshots;
 }
 export function loadSave(storage) {
   try {
@@ -164,16 +184,19 @@ export function loadSave(storage) {
     if (!raw || raw.length > 2_000_000) return emptySave();
     const data = JSON.parse(raw);
     if (!isObject(data) || data.version !== 1) return emptySave();
-    return { version: 1, profile: profileOf(data.profile), career: careerOf(data.career),
-      suspended: sanitizeSnapshot(data.suspended) };
+    const suspended = sanitizeSnapshot(data.suspended);
+    const save = { version: 1, profile: profileOf(data.profile), career: careerOf(data.career),
+      careers: data.careers, suspended, suspendedByMode: suspendedModes(data.suspendedByMode, suspended) };
+    ensureCareers(save);return save;
   } catch { return emptySave(); }
 }
 export function saveData(data, storage) {
   try {
     const target = storageOrDefault(storage);
     if (!target || !isObject(data) || data.version !== 1) return false;
+    const suspended = sanitizeSnapshot(data.suspended);
     const value = { version: 1, profile: profileOf(data.profile), career: careerOf(data.career),
-      suspended: sanitizeSnapshot(data.suspended) };
+      careers: ensureCareers(data), suspended, suspendedByMode: suspendedModes(data.suspendedByMode, suspended) };
     target.setItem(SAVE_KEY, JSON.stringify(value));
     return true;
   } catch { return false; }
@@ -201,8 +224,10 @@ export function restoreMatch(value) {
 export function recordResult(save, engine) {
   if (!save || !engine || engine.state !== 'FULL_TIME' || !['player', 'manager'].includes(engine.options?.mode)) return false;
   if (!engine.matchId) engine.matchId = identifier();
+  ensureCareers(save);
   save.career = careerOf(save.career);
   if (engine.resultRecorded || save.career.recordedIds.includes(engine.matchId)) return false;
+  applyCareerMatch(save, engine);
   const score = two(engine.score).map(Math.floor);
   const result = score[0] === score[1] ? 'draw' : score[0] > score[1] ? 'win' : 'loss';
   save.career.played++;

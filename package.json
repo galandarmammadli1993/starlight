@@ -9,11 +9,12 @@
     "build": "astro build",
     "preview": "astro preview",
     "astro": "astro",
-    "test": "node tests/rules.test.mjs && node tests/engine.test.mjs && node tests/storage.test.mjs"
+    "test": "node tests/rules.test.mjs && node tests/engine.test.mjs && node tests/storage.test.mjs && node tests/career.test.mjs && node tests/renderer.test.mjs"
   },
   "dependencies": {
     "@astrojs/starlight": "^0.34.1",
     "astro": "^5.6.1",
-    "sharp": "^0.32.5"
+    "sharp": "^0.32.5",
+    "three": "^0.180.0"
   }
 }
