@@ -1982,6 +1982,20 @@ dialog input,dialog select {
 .speed-label select { padding:8px; width:70px; margin:0; }
 .manager-talk-summary { padding:14px 20px; background:#253c2a; color:#d2ebc0; font-size:12px; line-height:1.7; }
 .manager-talk-summary[hidden] { display:none; }
+.player-coach-status { display:flex; gap:14px; align-items:center; flex-wrap:wrap; padding:16px 20px; background:#23372b; border-top:1px solid #3e5840; }
+.player-coach-status[hidden],.player-coach-status [hidden] { display:none; }
+.player-coach-status p { flex:1; min-width:200px; margin:0; font-size:12px; line-height:1.7; color:#c0d7b5; }
+.player-coach-status label { font-size:10px; color:#b5cda9; }
+.player-coach-status select { width:70px; padding:8px; margin-left:8px; }
+#aim-shot-button { border:1px solid #a1d16b; border-radius:5px; padding:13px; color:#c9efaa; font-size:11px; }
+#aim-shot-button[aria-pressed=true] { background:#b8ef79; color:#21371c; }
+.shot-aim-settings { width:100%; display:flex; flex-wrap:wrap; align-items:center; gap:18px; }
+.shot-aim-settings label { display:flex; align-items:center; gap:10px; }
+.shot-aim-settings input { width:110px; accent-color:#b8ef79; }
+.shot-aim-settings small { color:#c0d7b5; font-size:11px; }
+.shot-aim-guide { position:absolute; z-index:5; height:3px; background:#d9ff9e; transform-origin:left center; pointer-events:none; box-shadow:0 0 4px #132211; }
+.shot-aim-guide[hidden] { display:none; }
+.shot-aim-guide:after { content:''; position:absolute; right:-4px; top:-4px; width:10px; height:10px; border-top:3px solid #d9ff9e; border-right:3px solid #d9ff9e; transform:rotate(45deg); }
 .team-talk-dialog { width:min(760px,94vw); }
 .team-talk-choices { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin:20px 0; }
 .team-talk-choices button { text-align:left; padding:17px; background:#283d2c; border:1px solid #506c4e; border-radius:6px; }

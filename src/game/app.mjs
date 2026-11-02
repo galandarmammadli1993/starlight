@@ -5,6 +5,8 @@ import { ensureCareers, getCareerView, getPlayerAttributes, getManagerAttributes
 
 import { renderManagerDashboard } from './manager-ui.mjs';
 import { ensureManagerSimulation, managerDecision, managerMatchOptions, refreshManagerPsychology } from './manager-session.mjs';
+import { renderPlayerDashboard } from './player-ui.mjs';
+import { ensurePlayerSimulation, playerDecision, playerMatchOptions, beginPlayerSession } from './player-session.mjs';
 import { advanceSimulation } from './game-loop.mjs';
 
 const $ = id => document.getElementById(id);
@@ -29,6 +31,9 @@ let lastEventSequence = -1;
 let managerSpeed = 1;
 let talkContinue = null;
 let pendingSubSlot = null;
+let playerWatchSpeed=1;
+let shotAimActive=false;
+let shotDrag=null;
 const keys = new Set();
 const charges = new Map();
 const input = { x:0, y:0, sprint:false, press:false, shield:false };
@@ -38,6 +43,7 @@ let touchPress = false;
 const canvas = $('pitch');
 const renderer = new PitchRenderer(canvas);
 
+function currentPlayer(){return ensureCareers(save).player;}
 function currentManager() { return ensureCareers(save).manager; }
 function options() {
   const base = { halfMinutes:save.profile.halfMinutes, position:save.profile.position, formation:save.profile.formation, mode };
@@ -46,6 +52,7 @@ function options() {
     if(prepared.ok)return {...base,...prepared.options};
     return {...base,formation:currentManager().formation};
   }
+  if(mode==='player'){const prepared=playerMatchOptions(currentPlayer(),save.profile);if(prepared.ok)return {...base,...prepared.options};}
   return {...base,...(mode==='player'?{playerAttributes:getPlayerAttributes(save)}:{})};
 }
 function updateManagerMental() {
@@ -66,6 +73,24 @@ function exportProgress() {
   const url=URL.createObjectURL(new Blob([data],{type:'application/json'}));
   const link=document.createElement('a');link.href=url;link.download='footba11-heroes-save.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
+function executePlayerCommand(action,payload={}) {
+  if(suspendedFor('player'))return {ok:false,message:'Saxlanmış matç davam edir. Əvvəlcə onu tamamla.'};
+  const result=playerDecision(currentPlayer(),save.profile,action,payload);
+  if(result.ok&&action==='appearance'&&payload.field==='jerseyNumber')save.profile.shirtNumber=Number(payload.value);
+  if(result.ok){const ok=persist(false);profileUI();renderCareer();if(!ok)toast('Dəyişiklik yaddaşa yazılmadı. Yaddaş faylını çıxar.');}
+  else toast(result.message);
+  return result;
+}
+function requestPlayerPlay(){
+  if(suspendedFor('player')){launchMatch();return;}
+  const prepared=playerMatchOptions(currentPlayer(),save.profile);
+  if(!prepared.ok){toast(prepared.message);return;}
+  const result=beginPlayerSession(currentPlayer(),save.profile);
+  if(!result.ok){toast(result.message);return;}
+  launchMatch();persist();
+}
+function playerCanControl(){return mode!=='player'||!engine.hasPlayerCareerRoster||engine.playerCareerStatus==='playing';}
+
 function requestManagerPlay() {
   if(suspendedFor('manager')){launchMatch();return;}
   const prepared=managerMatchOptions(currentManager());
@@ -136,7 +161,7 @@ function makeMatch() {
   const next = new MatchEngine(options());
   next.cameraMode=mode==='player'?'close':'broadcast';
   if(mode==='manager')next.setTactic(getCareerView(save,'manager').tactic);
-  next.matchId = next.options.managerFixtureId ? `live-${next.options.managerFixtureId}` : (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  next.matchId = next.options.playerFixtureId?`player-live-${next.options.playerFixtureId}`:next.options.managerFixtureId ? `live-${next.options.managerFixtureId}` : (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`);
   next.kitColor = save.profile.kitColor;
   if(mode==='player') {
     const player = next.players.find(p=>p.id===next.careerPlayer);
@@ -180,7 +205,7 @@ function chooseMode(next) {
   mode=next;
   engine=makeMatch();
   lastLineupSignature=''; lastEventSequence=-1;
-  all('[data-mode]').forEach(button=>button.classList.toggle('selected',button.dataset.mode===mode));
+  all('button[data-mode]').forEach(button=>button.classList.toggle('selected',button.dataset.mode===mode));
   all('[data-nav]').forEach(button=>button.classList.toggle('active',button.dataset.nav===(mode==='quick'?'play':mode)));
   $('overlay-title').textContent=mode==='player'?'Your name. Your legacy.':mode==='manager'?'Build your winning eleven.':'Your pitch. Your moment.';
   $('overlay-description').textContent=mode==='player'?`Play as ${save.profile.name} · ${save.profile.position}. Your team moves with you.`:mode==='manager'?'Set the shape. Make the changes. Your team does the playing.':'A full 11 v 11 match. Build it your way.';
@@ -191,7 +216,7 @@ function chooseMode(next) {
   updateModeLayout();
   updateUI();
 }
-function startMatch() { if(mode==='manager'){requestManagerPlay();return;}launchMatch(); }
+function startMatch() { if(mode==='player'){requestPlayerPlay();return;}if(mode==='manager'){requestManagerPlay();return;}launchMatch(); }
 function launchMatch() {
   const saved=suspendedFor()?restoreMatch(suspendedFor()):null;
   engine=saved??makeMatch();
@@ -203,7 +228,7 @@ function launchMatch() {
   document.body.classList.add('playing');
   updateModeLayout();
   $('page-heading').textContent=mode==='player'?'Your career. Your moment.':mode==='manager'?'From the touchline.':'Matchday is here.';
-  $('match-context').textContent=mode==='manager'?`BAŞ MƏŞQÇİ / ${engine.options.managerUserIsHome===false?'SƏFƏR MATÇI':'BAKU PARK'}`:`${mode==='quick'?'EXHIBITION':'PLAYER CAREER'} / BAKU PARK`;
+  $('match-context').textContent=mode==='manager'?`BAŞ MƏŞQÇİ / ${(engine.options.playerUserIsHome??engine.options.managerUserIsHome)===false?'SƏFƏR MATÇI':'BAKU PARK'}`:mode==='player'?`FUTBOLÇU KARYERASI / ${engine.options.playerClubName??'BAKU PARK'}`:'EXHIBITION / BAKU PARK';
   $('pause-button').disabled=false;
   if(saved) {
     if(engine.state==='PAUSED') engine.resume();
@@ -221,7 +246,7 @@ function returnMenu() {
     else { engine.pause(); storeSuspended(captureMatch(engine)); }
     saved=persist(false);
   }
-  started=false; keys.clear();charges.clear();joy={x:0,y:0};touchSprint=touchPress=false;
+  started=false;shotAimActive=false;shotDrag=null;$('shot-aim-guide').hidden=true;$('aim-shot-button').setAttribute('aria-pressed','false'); keys.clear();charges.clear();joy={x:0,y:0};touchSprint=touchPress=false;
   document.body.classList.remove('playing');
   $('page-heading').textContent='Let’s play football.';
   $('match-context').textContent='EXHIBITION / BAKU PARK';
@@ -255,13 +280,16 @@ $('all-controls').addEventListener('click',()=>openDialog('help-dialog'));
 $('edit-profile').addEventListener('click',()=>openDialog('settings-dialog'));
 $('settings-form').addEventListener('submit',event=>{
   event.preventDefault();
+  const personal=ensureCareers(save).player;
+  if(personal.journey&&!personal.journey.positions.includes($('player-role').value)){toast('Bu mövqeni əvvəlcə futbolçu karyerasının məşq bölməsində inkişaf xalı ilə aç.');return;}
+  if(personal.journey){personal.journey.activePosition=$('player-role').value;ensurePlayerSimulation(personal,save.profile).life.appearance.jerseyNumber=Number($('shirt-number').value);}
   save.profile={...save.profile,name:$('player-name').value.trim()||'Alex Hero',position:$('player-role').value,shirtNumber:Number($('shirt-number').value),halfMinutes:Number($('half-minutes').value),kitColor:$('kit-color').value};
   if(engine)engine.kitColor=save.profile.kitColor;
   profileUI();persist();$('settings-dialog').close();
   if(!started)chooseMode(mode);
   toast('Profile saved. Match length applies to your next match.');
 });
-all('[data-mode]').forEach(button=>button.addEventListener('click',()=>chooseMode(button.dataset.mode)));
+all('button[data-mode]').forEach(button=>button.addEventListener('click',()=>chooseMode(button.dataset.mode)));
 all('[data-nav]').forEach(button=>button.addEventListener('click',()=>{
   const value=button.dataset.nav;
   if(value==='settings'){openDialog('settings-dialog');return;}
@@ -273,7 +301,7 @@ $('menu-button').addEventListener('click',()=>{const ok=returnMenu();toast(ok?'G
 $('pause-button').addEventListener('click',togglePause);
 $('kickoff-button').addEventListener('click',()=>{
   if(!started){startMatch();return;}
-  if(engine.state==='FULL_TIME'){if(mode==='manager'){returnMenu();return;}storeSuspended(null);started=false;startMatch();return;}
+  if(engine.state==='FULL_TIME'){if(mode==='manager'||mode==='player'){returnMenu();return;}storeSuspended(null);started=false;startMatch();return;}
   if(engine.state==='HALF_TIME'&&mode==='manager'){showManagerTalk('half_time',()=>{engine.continueMatch();lastFrame=0;updateUI();});return;}
   engine.continueMatch();lastFrame=0;updateUI();
 });
@@ -295,7 +323,8 @@ $('tactic').addEventListener('change',event=>{engine.setTactic(event.target.valu
 const descriptions={balanced:'Keep your shape. Move the ball. Find the opening.',wide:'Stretch the pitch. Send full-backs forward and deliver from either wing.',press:'Close down the ball carrier. Force errors higher up the pitch.',counter:'Stay compact, then release your forwards into space.'};
 function updateModeLayout(){
   const careerMenu=!started&&mode!=='quick';
-  $('career-hub').hidden=!(careerMenu&&mode==='player');
+  $('career-hub').hidden=true;
+  $('player-dashboard').hidden=!(careerMenu&&mode==='player');
   $('manager-dashboard').hidden=!(careerMenu&&mode==='manager');
   $('home-intro').hidden=mode!=='quick';
   $('match-heading-row').hidden=careerMenu;
@@ -312,22 +341,6 @@ function updateModeLayout(){
   $('page-heading').textContent=started?(mode==='manager'?'From the touchline.':mode==='player'?'Your career. Your moment.':'Matchday is here.'):(mode==='player'?'The life of a footballer.':mode==='manager'?'Your club. Your decisions.':'Let’s play football.');
   document.querySelector('.match-bottom>span').textContent=mode==='manager'?'Choose your approach, manage the squad and watch your plan unfold.':mode==='player'?'W A S D Hərəkət · R Top istə · J Ötür · K Vur':'W A S D Move · J Pass · K Shoot · X One-two';
 }
-const careerActions={
-  player:[
-    ['train_passing','01','Passing session','+2 Passing · −18 energy','Sharpen your touch and build better combinations.'],
-    ['train_shooting','02','Finishing drills','+2 Shooting · −22 energy','Find the corners. Make the next chance count.'],
-    ['train_fitness','03','Fitness training','+2 Pace · −24 energy','Build the engine behind your matchday runs.'],
-    ['rest','04','Recovery day','+32 Energy · +2 fitness','Switch off, recover and return ready to play.'],
-    ['community','05','Life off the pitch','+2 Reputation · −10 energy','Meet the fans. Build a life beyond the scoreline.'],
-  ],
-  manager:[
-    ['team_training','01','Train the squad','€500 · preparation +1','Develop the team under your chosen training focus.'],
-    ['rest_team','02','Give the team a day off','Free · +18 team fitness','A rested squad is ready for the next fixture.'],
-    ['scouting','03','Commission scouting','€1,200 · report +1','Build your knowledge and board confidence.'],
-    ['youth','04','Invest in the academy','€5,000 · academy +1','Improve the technical foundations of your team.'],
-    ['recovery','05','Book recovery staff','€350 · +28 team fitness','Help the squad recover after demanding fixtures.'],
-  ],
-};
 function renderCareer(){
   if(mode==='quick')return;
   if(mode==='manager'){
@@ -335,42 +348,9 @@ function renderCareer(){
     renderManagerDashboard($('manager-dashboard'),{manager,world,onCommand:executeManagerCommand,onPlay:requestManagerPlay,onSimulate:()=>{const result=executeManagerCommand('simulate');if(result.ok)toast(result.message);},onExport:exportProgress,onImport:()=>$('import-save-file').click()});
     return;
   }
-  const c=getCareerView(save,mode),player=mode==='player';
-  $('career-eyebrow').textContent=player?'PLAYER CAREER / YOUR JOURNEY':'MANAGER CAREER / CLUB OFFICE';
-  $('career-title').innerHTML=player?'ONE LIFE.<br />ONE LEGACY.':'THE CLUB.<br />YOUR CALL.';
-  $('career-description').textContent=player?'Train, recover, build your reputation and live your own football story. On matchday, you play only as yourself.':'Choose the shape, develop the squad and balance the club’s resources. On matchday, manage from the touchline.';
-  $('career-day').textContent=`WEEK ${c.week} / DAY ${c.day}`;
-  $('career-identity').textContent=player?`${save.profile.name.toUpperCase()} · ${save.profile.position} · #${save.profile.shirtNumber}`:'BAKU ATHLETIC · FIRST TEAM MANAGER';
-  $('career-shirt').textContent=save.profile.shirtNumber;
-  $('career-portrait-caption').textContent=player?`${c.appearances} APPEARANCES · ${c.goals} PERSONAL GOALS`:'THE TEAM IS IN YOUR HANDS';
-  $('career-actions-title').textContent=player?'OFF THE PITCH':'CLUB DECISIONS';
-  const metrics=player?[['ENERGY',Math.round(c.energy),'Recover before your next game'],['FITNESS',Math.round(c.fitness),'Your match readiness'],['REPUTATION',Math.round(c.reputation),'Make your name'],['YOUR WALLET',`€${c.balance.toLocaleString()}`,`Weekly salary: €${c.salary}`]]:[['CLUB BUDGET',`€${c.budget.toLocaleString()}`,'Spend on the squad and its future'],['BOARD TRUST',Math.round(c.boardConfidence),'Results shape their confidence'],['TEAM MORALE',Math.round(c.teamMorale),'Keep the dressing room together'],['TEAM FITNESS',Math.round(c.teamFitness),'Manage the load']];
-  const metricNodes=document.createDocumentFragment();
-  for(const [label,value,note] of metrics){const card=document.createElement('div');card.className='career-metric';const l=document.createElement('span');l.textContent=label;const v=document.createElement('b');v.textContent=value;const n=document.createElement('small');n.textContent=note;card.append(l,v,n);metricNodes.append(card);}$('career-metrics').replaceChildren(metricNodes);
-  const actions=document.createDocumentFragment();
-  for(const [action,number,title,cost,description] of careerActions[mode]){
-    const button=document.createElement('button');button.className='career-action';button.dataset.careerAction=action;
-    const n=document.createElement('span');n.className='activity-number';n.textContent=number;
-    const copy=document.createElement('span');const h=document.createElement('b');h.textContent=title;const p=document.createElement('small');p.textContent=description;const meta=document.createElement('em');meta.textContent=cost;copy.append(h,p,meta);
-    const arrow=document.createElement('span');arrow.className='activity-arrow';arrow.textContent='→';button.append(n,copy,arrow);
-    button.addEventListener('click',()=>{const result=careerAction(save,mode,action);persist(false);renderCareer();toast(result.message);});actions.append(button);
-  }$('career-actions').replaceChildren(actions);
-  if(player){
-    const skills=document.createElement('div');skills.className='career-skill-grid';
-    for(const [name,value] of Object.entries(c.skills)){const item=document.createElement('div');const label=document.createElement('span');label.textContent=name.toUpperCase();const val=document.createElement('b');val.textContent=Math.round(value);const bar=document.createElement('i');bar.style.setProperty('--level',`${value}%`);item.append(label,val,bar);skills.append(item);}
-    $('career-note').replaceChildren(skills);const note=document.createElement('p');note.textContent='Each activity advances one day. Living costs are €20 per day. Energy and skills affect your own player in the next match.';$('career-note').append(note);
-  }else{
-    const label=document.createElement('label');label.textContent='TRAINING FOCUS';label.htmlFor='training-focus';const select=document.createElement('select');select.id='training-focus';
-    for(const [value,title]of [['balanced','Balanced · passing'],['attack','Attacking · finishing'],['defence','Defensive · ball winning']]){const option=document.createElement('option');option.value=value;option.textContent=title;select.append(option);}select.value=c.trainingFocus;
-    select.addEventListener('change',()=>{setTrainingFocus(save,select.value);persist(false);toast('Training focus saved for the next fixture.');});
-    const note=document.createElement('p');note.textContent=`Academy level ${c.youthLevel}/10 · ${c.scoutingReports} scouting reports · ${c.record.won} wins from ${c.record.played} matches. Investments and training affect your team’s match attributes.`;
-    $('career-note').replaceChildren(label,select,note);
-  }
-  $('career-match-description').textContent=player?`Your role: ${save.profile.position}. Control your own movement, call for passes and earn your place. The coach handles the rest of the team.`:'Your players handle the ball. You choose formation, tactics and substitutions from the touchline.';
-  $('career-play').innerHTML=`${suspendedFor()?'RESUME YOUR MATCH':player?'PLAY AS YOURSELF':'MANAGE NEXT MATCH'} <span>→</span>`;
-  $('career-resume').hidden=!suspendedFor();
-  const log=document.createDocumentFragment();for(const activity of c.activityLog.slice(0,4)){const row=document.createElement('div');row.className='career-log';const day=document.createElement('span');day.textContent=`DAY ${activity.day}`;const message=document.createElement('p');message.textContent=activity.message;row.append(day,message);log.append(row);}
-  if(!c.activityLog.length){const note=document.createElement('p');note.className='panel-note';note.textContent=player?'Your journey begins with the choices you make today.':'Set your training focus and prepare for your first match.';log.append(note);}$('career-activity').replaceChildren(log);
+  const player=currentPlayer(),journey=ensurePlayerSimulation(player,save.profile);
+  playerMatchOptions(player,save.profile);
+  renderPlayerDashboard($('player-dashboard'),{player,journey,profile:save.profile,hasSuspended:!!suspendedFor('player'),onCommand:executePlayerCommand,onPlay:requestPlayerPlay,onSimulate:()=>{const result=executePlayerCommand('simulate');if(result.ok)toast(result.message);},onExport:exportProgress,onImport:()=>$('import-save-file').click()});
 }
 $('career-play').addEventListener('click',startMatch);
 $('career-resume').addEventListener('click',()=>{storeSuspended(null);persist(false);startMatch();});
@@ -403,7 +383,7 @@ $('import-save-file').addEventListener('change',async event=>{
   const imported=importSave(await file.text());
   if(!imported){toast('Bu fayl etibarlı Footba11 Heroes yaddaşı deyil.');return;}
   if(!saveData(imported)){toast('Yaddaş qəbul edildi, amma brauzerə yazıla bilmir. Mövcud oyun saxlanıldı.');return;}
-  save=imported;started=false;document.body.classList.remove('playing');profileUI();chooseMode('manager');toast('Karyeralar və saxlanmış matçlar fayldan bərpa edildi.');
+  const importedMode=mode==='player'?'player':'manager';save=imported;started=false;document.body.classList.remove('playing');profileUI();chooseMode(importedMode);toast('Karyeralar və saxlanmış matçlar fayldan bərpa edildi.');
 });
 all('[data-panel]').forEach(button=>button.addEventListener('click',()=>{
   all('[data-panel]').forEach(b=>b.classList.toggle('active',b===button));
@@ -412,34 +392,62 @@ all('[data-panel]').forEach(button=>button.addEventListener('click',()=>{
 }));
 
 function cycleTarget() {
-  if(mode==='manager')return;
+  if(!playerCanControl()||mode==='manager')return;
   const players=engine.players.filter(p=>p.team===0&&!p.sentOff&&p.id!==engine.controlled);
   const current=players.findIndex(p=>p.id===engine.selectedTarget);
   const target=players[(current+1)%players.length];
   if(target){engine.selectTarget(target.id);toast(`Receiver: #${target.number} ${target.name}`);}
 }
 $('target-button').addEventListener('click',cycleTarget);
+$('player-watch-speed').addEventListener('change',()=>{playerWatchSpeed=Number($('player-watch-speed').value);});
+$('aim-shot-button').addEventListener('click',()=>{
+  if(!started||mode!=='player'||!playerCanControl())return;
+  shotAimActive=!shotAimActive;$('aim-shot-button').setAttribute('aria-pressed',String(shotAimActive));
+  $('shot-aim-settings').hidden=!shotAimActive;
+  if(shotAimActive)toast('Top səndəykən meydanda hədəfə doğru sürüşdür. Uzun sürüşdürmə zərbənin gücünü artırır.');
+});
 canvas.addEventListener('pointerdown',event=>{
-  if(!started||mode==='manager')return;
+  if(!started||mode==='manager'||!playerCanControl())return;
+  if(shotAimActive&&mode==='player'){
+    if(engine.ball.owner!==engine.careerPlayer){toast('Nişan almaq üçün top səndə olmalıdır.');return;}
+    shotDrag={x:event.clientX,y:event.clientY,pointerId:event.pointerId};canvas.setPointerCapture(event.pointerId);event.preventDefault();return;
+  }
   const point=renderer.screenToWorld(event.clientX,event.clientY);
   if(!point||point.x<0||point.x>105||point.y<0||point.y>68)return;
   const target=engine.players.filter(p=>p.team===0&&!p.sentOff&&p.id!==engine.controlled).sort((a,b)=>Math.hypot(a.x-point.x,a.y-point.y)-Math.hypot(b.x-point.x,b.y-point.y))[0];
   if(target&&Math.hypot(target.x-point.x,target.y-point.y)<4)engine.selectTarget(target.id);
   canvas.focus({preventScroll:true});
 });
+canvas.addEventListener('pointermove',event=>{
+  if(!shotDrag||event.pointerId!==shotDrag.pointerId)return;
+  const bounds=canvas.getBoundingClientRect(),guide=$('shot-aim-guide');
+  const dx=event.clientX-shotDrag.x,dy=event.clientY-shotDrag.y;
+  guide.hidden=false;guide.style.left=`${shotDrag.x-bounds.left}px`;guide.style.top=`${shotDrag.y-bounds.top}px`;
+  guide.style.width=`${Math.hypot(dx,dy)}px`;guide.style.transform=`rotate(${Math.atan2(dy,dx)}rad)`;
+});
+canvas.addEventListener('pointerup',event=>{
+  if(!shotDrag||event.pointerId!==shotDrag.pointerId)return;
+  const drag=shotDrag;shotDrag=null;$('shot-aim-guide').hidden=true;
+  const distance=Math.hypot(event.clientX-drag.x,event.clientY-drag.y),aim=renderer.screenToWorld(event.clientX,event.clientY);
+  if(distance<10||!aim)return;
+  if(engine.ball.owner!==engine.careerPlayer){toast('Zərbə anında top səndə olmalıdır.');return;}
+  fire('shoot',Math.min(1,Math.max(.25,distance/180)),{x:aim.x,y:aim.y,spin:Number($('shot-spin').value),contactY:Number($('shot-contact').value)});
+});
+canvas.addEventListener('pointercancel',()=>{shotDrag=null;$('shot-aim-guide').hidden=true;});
 function isDefending(){return started&&engine.state==='IN_PLAY'&&engine.possessionTeam===1;}
 function canAskTeammate(){const owner=engine.ball.owner;return started&&engine.state==='IN_PLAY'&&owner!==null&&owner!==engine.controlled&&engine.players[owner]?.team===0;}
-function fire(kind,power=.6) {
-  if(!started||mode==='manager'||engine.state==='PAUSED'||document.querySelector('dialog[open]'))return;
+function fire(kind,power=.6,explicitAim=null) {
+  if(!started||mode==='manager'||!playerCanControl()||engine.state==='PAUSED'||document.querySelector('dialog[open]'))return;
   if(isDefending())kind=({pass:'press',through:mode==='player'?'tackle':'switch',cross:'clear',shoot:'tackle'})[kind]??kind;
   if(kind==='pass'&&canAskTeammate())kind='call';
   if(kind==='press')return;
-  let aim=null;
-  if(engine.restart&&engine.restart.type!=='KICK_OFF'&&Math.hypot(input.x,input.y)>.1){
+  let aim=explicitAim;
+  if(!aim&&engine.restart&&engine.restart.type!=='KICK_OFF'&&Math.hypot(input.x,input.y)>.1){
     const d=Math.hypot(input.x,input.y),b=engine.ball;
     aim=kind==='shoot'?{x:engine.directions[0]===1?106:-1,y:34+input.y*2.6}:{x:b.x+input.x/d*25,y:b.y+input.y/d*25};
   }
   const success=engine.action(kind,power,aim);
+  if(success&&kind==='shoot'){shotAimActive=false;$('aim-shot-button').setAttribute('aria-pressed','false');$('shot-aim-guide').hidden=true;}
   if(kind==='call')updateUI();
   if(!success&&kind==='call')toast(engine.getPassCallStatus?.().message??'Boş yerə çıxıb yenidən topu istə.');
   if(!success&&kind!=='switch'&&kind!=='call'&&engine.state==='IN_PLAY'){
@@ -550,10 +558,21 @@ function renderOffBall(){
 }
 function updateUI(){
   if(!engine)return;
-  $('home-team-name').textContent=engine.options.managerUserName??'BAKU ATHLETIC';
-  $('away-team-name').textContent=engine.options.managerOpponentName??'COAST UNITED';
-  $('user-venue-label').textContent=engine.options.managerUserIsHome===false?'SƏFƏR':'EV';
-  $('opponent-venue-label').textContent=`${engine.options.managerUserIsHome===false?'EV':'SƏFƏR'} · 4-3-3`;
+  const hasHero=started&&mode==='player'&&engine.hasPlayerCareerRoster;
+  const active=playerCanControl(),playerStatus=engine.playerCareerStatus;
+  $('player-coach-status').hidden=!(started&&mode==='player');
+  $('player-coach-copy').textContent=hasHero&&!active?({bench:`Ehtiyatdasan. Məşqçi ${engine.playerCoachEntryMinute??60}-cı dəqiqədən sonra top dayananda səni meydana buraxa bilər.`,omitted:'Bu matçın heyətində deyilsən. Komandanı izləyirsən; digər futbolçuları idarə edə bilməzsən.',substituted:`Məşqçi səni əvəzlədi. Səbəb: ${engine.playerCoachSubstitutionReason??'taktiki qərar'}. Şəxsi dəqiqələrin hesabatda saxlanılır.`,sent_off:'Qırmızı kart aldın. Bu matçda artıq meydana qayıda bilməzsən.'}[playerStatus]??'Məşqçinin qərarını gözləyirsən.'):'Yalnız öz futbolçunu idarə edirsən. TOP İSTƏ / R ilə ötürmə istə; NİŞANLA VƏ VUR ilə hədəf seç.';
+  $('player-watch-label').hidden=active;
+  $('aim-shot-button').hidden=!active;
+  $('aim-shot-button').disabled=!active||engine.ball.owner!==engine.careerPlayer;
+  $('touch-controls').hidden=mode==='manager'||(mode==='player'&&!active);
+  $('offball-panel').hidden=!started||mode==='manager'||(mode==='player'&&!active);
+  $('shot-aim-settings').hidden=!(started&&mode==='player'&&active&&shotAimActive);
+  $('home-team-name').textContent=engine.options.playerClubName??engine.options.managerUserName??'BAKU ATHLETIC';
+  $('away-team-name').textContent=engine.options.playerOpponentName??engine.options.managerOpponentName??'COAST UNITED';
+  for(const [selector,name] of [['.home-crest',$('home-team-name').textContent],['.away-crest',$('away-team-name').textContent]])document.querySelector(selector).firstChild.nodeValue=name.split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase();
+  $('user-venue-label').textContent=(engine.options.playerUserIsHome??engine.options.managerUserIsHome)===false?'SƏFƏR':'EV';
+  $('opponent-venue-label').textContent=`${(engine.options.playerUserIsHome??engine.options.managerUserIsHome)===false?'EV':'SƏFƏR'} · 4-3-3`;
   const talkState=engine.state==='PAUSED'?engine.previousState:engine.state;
   $('manager-talk-button').textContent=talkState==='HALF_TIME'?'FASİLƏ ÇIXIŞI':talkState==='FULL_TIME'?'OYUNDAN SONRA DANIŞ':'ÇIXIŞ ET';
   $('manager-talk-button').disabled=!['HALF_TIME','FULL_TIME'].includes(talkState);
@@ -569,12 +588,19 @@ function updateUI(){
   all('[data-manager-tactic]').forEach(button=>button.classList.toggle('active',button.dataset.managerTactic===engine.tactic));
   $('pause-button').textContent=engine.state==='PAUSED'?'▶':'II';$('pause-button').setAttribute('aria-label',engine.state==='PAUSED'?'Resume match':'Pause match');
   const p=engine.controlledPlayer;
-  $('controlled-label').textContent=started?(mode==='manager'?'MANAGER VIEW':`#${p?.number??''} ${(p?.name??'').toUpperCase()}`):'BAKU ATHLETIC';
+  $('controlled-label').textContent=started?(mode==='manager'?'MANAGER VIEW':mode==='player'&&!active?'MƏŞQÇİNİN QƏRARI':`#${p?.number??''} ${(p?.name??'').toUpperCase()}`):'BAKU ATHLETIC';
   $('action-hint').textContent=mode==='manager'?'Your tactics. Their movement.':engine.restart?`${engine.restart.type.replaceAll('_',' ')} · restart`:engine.selectedTarget!==null?`TARGET #${engine.players[engine.selectedTarget]?.number}`:mode==='player'?'R / TOP İSTƏ · yalnız öz oyunçun':'Click a teammate to choose a receiver';
   if(mode==='player'){
-    const own=engine.players[engine.careerPlayer],summary=$('player-match-summary');
-    const key=`${own?.name}/${own?.role}/${Math.round(own?.stamina??0)}/${engine.playerGoals?.[engine.careerPlayer]??0}`;
-    if(summary.dataset.key!==key){summary.dataset.key=key;summary.replaceChildren();const heading=document.createElement('h3');heading.textContent=own?.name??save.profile.name;const role=document.createElement('p');role.className='panel-note';role.textContent=`YOUR POSITION: ${own?.role} · #${own?.number}`;const stamina=document.createElement('div');stamina.className='player-match-stat';stamina.textContent=`STAMINA ${Math.round(own?.stamina??0)}%`;const goals=document.createElement('div');goals.className='player-match-stat';goals.textContent=`PERSONAL GOALS ${engine.playerGoals?.[engine.careerPlayer]??0}`;const hint=document.createElement('p');hint.className='panel-note';hint.textContent='Komanda yoldaşların öz qərarlarını verir. Boş yerə çıx, R bas və ya TOP İSTƏ düyməsinə toxun. Yuxarıdakı bildiriş ötürmənin vəziyyətini göstərir.';summary.append(heading,role,stamina,goals,hint);}
+    const own=active?engine.players[engine.careerPlayer]:null,report=engine.hasPlayerCareerRoster?engine.playerMatchReport?.hero:null,summary=$('player-match-summary');
+    const key=`${own?.name}/${own?.role}/${Math.round(own?.stamina??0)}/${report?.goals??engine.playerGoals?.[engine.careerPlayer]??0}/${playerStatus}/${Math.floor(report?.minutes??0)}`;
+    if(summary.dataset.key!==key){
+      summary.dataset.key=key;summary.replaceChildren();
+      const heading=document.createElement('h3');heading.textContent=save.profile.name;
+      const role=document.createElement('p');role.className='panel-note';role.textContent=active?`${own?.role} · #${own?.number}`:'Məşqçinin qərarını və komandanı izləyirsən.';
+      const stats=document.createElement('div');stats.className='player-match-stat';stats.textContent=`${Math.round(report?.minutes??0)}′ · ${report?.goals??engine.playerGoals?.[engine.careerPlayer]??0} qol · ${report?.assists??0} assist · Reytinq ${(report?.rating??6).toFixed(1)}`;
+      const readiness=document.createElement('p');readiness.className='panel-note';readiness.textContent=active?`Enerji ${Math.round(own?.stamina??0)}%. Mövqe tut, komandanın tapşırığını yerinə yetir.`:'Meydanı izləmə sürətini artıraraq növbəti fürsətə keçə bilərsən.';
+      summary.append(heading,role,stats,readiness);
+    }
   }
   const defending=isDefending();
   const controlLabels={pass:[defending?'PRES':canAskTeammate()?'TOP İSTƏ':'ÖTÜR','J'],through:[defending?(mode==='player'?'MÜDAXİLƏ':'DƏYİŞ'):'ARA ÖTÜRMƏ','U'],cross:[defending?'UZAQLAŞDIR':'KROSS','L'],shoot:[defending?'MÜDAXİLƏ':'VUR','K']};
@@ -587,7 +613,7 @@ function updateUI(){
       $('overlay-title').textContent=paused?'We’ll hold the play.':half?'Half-time. Reset. Go again.':`${engine.score[0]} – ${engine.score[1]} · ${engine.score[0]===engine.score[1]?'Honours even.':engine.score[0]>engine.score[1]?'Your moment. Your win.':'Another lesson. Another match.'}`;
       $('overlay-description').textContent=paused?'Your clock is paused. Ready when you are.':half?'Teams switch ends. Change tactics or make a substitution.':'Your career result has been saved on this device.';
       if(engine.state==='FULL_TIME'&&mode==='quick')$('overlay-description').textContent='Exhibition complete. Ready for another match?';
-      $('kickoff-button').innerHTML=`${paused?'RESUME MATCH':half?(mode==='manager'?'FASİLƏ ÇIXIŞI → İKİNCİ HİSSƏ':'SECOND HALF'):(mode==='manager'?'KARYERA QƏRARGAHINA QAYIT':'PLAY AGAIN')} <span>→</span>`;
+      $('kickoff-button').innerHTML=`${paused?'RESUME MATCH':half?(mode==='manager'?'FASİLƏ ÇIXIŞI → İKİNCİ HİSSƏ':'SECOND HALF'):(mode==='manager'||mode==='player'?'KARYERA QƏRARGAHINA QAYIT':'PLAY AGAIN')} <span>→</span>`;
     }
     if(engine.notification!==lastNotification){lastNotification=engine.notification;$('match-message').textContent=lastNotification;messageUntil=performance.now()+3500;}
     $('match-message').classList.toggle('visible',!show&&performance.now()<messageUntil);
@@ -604,7 +630,7 @@ function frame(timestamp){
   input.x=kx||joy.x;input.y=ky||joy.y;input.sprint=touchSprint||keys.has('ShiftLeft')||keys.has('ShiftRight');
   input.press=touchPress||(isDefending()&&(keys.has('KeyJ')||keys.has('Space')));input.shield=keys.has('KeyZ');
   if(started){
-    advanceSimulation(engine,dt,input,mode==='manager'?managerSpeed:1);autoSaveAge+=Math.min(dt,5);
+    advanceSimulation(engine,dt,input,mode==='manager'?managerSpeed:mode==='player'&&!playerCanControl()?playerWatchSpeed:1);autoSaveAge+=Math.min(dt,5);
     if(engine.state==='FULL_TIME'&&finishedSaved!==engine.matchId){recordResult(save,engine);storeSuspended(null);finishedSaved=engine.matchId;persist(false);}
     if(autoSaveAge>15){autoSaveAge=0;persist();}
   }
@@ -617,4 +643,4 @@ profileUI();chooseMode(save.suspended?.options?.mode??'quick');requestAnimationF
 if(save.recoveredFromBackup)toast('Əsas yaddaş zədələndiyi üçün əvvəlki sağlam surət bərpa edildi.');
 
 // Inspectable only in local development; production has no public debug control.
-if(import.meta.env.DEV)window.__football={get engine(){return engine;},get save(){return save;},managerDecision:(action,payload)=>executeManagerCommand(action,payload),startMatch,returnMenu,fire,renderer};
+if(import.meta.env.DEV)window.__football={get engine(){return engine;},get save(){return save;},playerDecision:(action,payload)=>executePlayerCommand(action,payload),managerDecision:(action,payload)=>executeManagerCommand(action,payload),startMatch,returnMenu,fire,renderer};

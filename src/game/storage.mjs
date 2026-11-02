@@ -72,7 +72,8 @@ function restartOf(value) {
 }
 function attributesOf(value) {
   if (!isObject(value)) return undefined;
-  return Object.fromEntries(['pace', 'passing', 'shooting', 'defending', 'fitness', 'energy', 'morale']
+  return Object.fromEntries(['pace', 'passing', 'shooting', 'defending', 'fitness', 'energy', 'morale',
+    'confidence', 'trust', 'experience', 'focus', 'cooperation', 'discipline', 'composure', 'stress']
     .filter(key => finite(value[key], 0, 100)).map(key => [key, value[key]]));
 }
 const persistentId = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}$/.test(value);
@@ -100,11 +101,11 @@ function rosterPersonOf(value) {
     age: integer(value.age, 24, 15, 50), attributes: attributesOf(value.attributes) ?? {},
     morale: num(value.morale, 70, 0, 100), confidence: num(value.confidence, 70, 0, 100),
     trust: num(value.trust, 60, 0, 100), experience: num(value.experience, 50, 0, 100),
-    fitness: num(value.fitness, 80, 0, 100), fatigue: num(value.fatigue, 0, 0, 100),
+    fitness: num(value.fitness, 80, 0, 100), energy: num(value.energy, num(value.fitness, 80, 0, 100), 0, 100), fatigue: num(value.fatigue, 0, 0, 100),
     stamina: num(value.stamina, 80, 0, 100), injuryDays: integer(value.injuryDays, 0, 0, 365),
     suspension: integer(value.suspension, 0, 0, 20), suspendedMatches: integer(value.suspendedMatches, 0, 0, 20),
     status: text(value.status, 'rotation', 30), dominantFoot: choose(value.dominantFoot, ['left', 'right', 'both'], 'right'),
-    psych: detailsOf(value.psych), psychMatch: detailsOf(value.psychMatch), group: text(value.group, '', 80),
+    psych: detailsOf(value.psych), psychMatch: detailsOf(value.psychMatch), appearance: detailsOf(value.appearance), group: text(value.group, '', 80),
   };
 }
 function rosterOf(value, limit = 25) {
@@ -121,7 +122,7 @@ function managerStatsOf(value) {
       name: text(item.name, 'Player', 80), minutes: num(item.minutes, 0, 0, 160),
       goals: integer(item.goals, 0, 0, 100), assists: integer(item.assists, 0, 0, 100),
       passes: integer(item.passes, 0, 0, 10000), completedPasses: integer(item.completedPasses, 0, 0, 10000),
-      shots: integer(item.shots, 0, 0, 10000), yellow: integer(item.yellow, 0, 0, 2),
+      shots: integer(item.shots, 0, 0, 10000), keyPasses: integer(item.keyPasses, 0, 0, 10000), yellow: integer(item.yellow, 0, 0, 2),
       red: item.red === true || item.red === 1, rating: num(item.rating, 6, 0, 10), fitness: num(item.fitness, 80, 0, 100) };
   }
   return out;
@@ -149,7 +150,7 @@ function sanitizeSnapshot(value) {
     };
     if (persistentId(p.persistentId)) {
       const person = rosterPersonOf(p);
-      for (const key of ['persistentId', 'naturalRole', 'attributes', 'age', 'morale', 'confidence', 'trust', 'experience', 'fitness', 'fatigue', 'psych', 'psychMatch', 'group']) player[key] = person[key];
+      for (const key of ['persistentId', 'naturalRole', 'attributes', 'age', 'morale', 'confidence', 'trust', 'experience', 'fitness', 'energy', 'fatigue', 'psych', 'psychMatch', 'appearance', 'group']) player[key] = person[key];
     }
     players.push(player);
   }
@@ -165,24 +166,35 @@ function sanitizeSnapshot(value) {
     formation: choose(value.options?.formation, FORMATIONS, '4-3-3'), difficulty: 'normal' };
   if (attributesOf(value.options?.playerAttributes)) options.playerAttributes = attributesOf(value.options.playerAttributes);
   if (attributesOf(value.options?.teamAttributes)) options.teamAttributes = attributesOf(value.options.teamAttributes);
-  for (const key of ['managerRoster', 'managerBench', 'opponentRoster']) {
-    if (Array.isArray(value.options?.[key])) options[key] = rosterOf(value.options[key], key === 'managerBench' ? 25 : 11);
+  for (const key of ['managerRoster', 'managerBench', 'playerRoster', 'playerBench', 'opponentRoster']) {
+    if (Array.isArray(value.options?.[key])) options[key] = rosterOf(value.options[key], key.endsWith('Bench') ? 25 : 11);
   }
+  for (const key of ['playerFixtureId', 'playerHeroId', 'playerUserClubId']) if (persistentId(value.options?.[key])) options[key] = value.options[key];
+  if (finite(value.options?.playerWorldSeason, 1, 10000)) options.playerWorldSeason = Math.floor(value.options.playerWorldSeason);
+  if (typeof value.options?.playerUserIsHome === 'boolean') options.playerUserIsHome = value.options.playerUserIsHome;
+  if (['starter', 'bench', 'omitted'].includes(value.options?.playerSelection)) options.playerSelection = value.options.playerSelection;
+  if (finite(value.options?.playerEntryMinute, 0, 130)) options.playerEntryMinute = value.options.playerEntryMinute;
+  if (finite(value.options?.playerCoachExitMinute, 0, 130)) options.playerCoachExitMinute = value.options.playerCoachExitMinute;
+  if (finite(value.options?.playerExitMinute, 0, 130)) options.playerExitMinute = value.options.playerExitMinute;
+  if (isObject(value.options?.playerAppearance)) options.playerAppearance = detailsOf(value.options.playerAppearance);
   if (persistentId(value.options?.managerFixtureId)) options.managerFixtureId = value.options.managerFixtureId;
   if (persistentId(value.options?.managerUserClubId)) options.managerUserClubId = value.options.managerUserClubId;
   if (finite(value.options?.managerWorldSeason, 1, 10000)) options.managerWorldSeason = Math.floor(value.options.managerWorldSeason);
   if (typeof value.options?.managerUserIsHome === 'boolean') options.managerUserIsHome = value.options.managerUserIsHome;
   if (typeof value.options?.managerHomeIsUser === 'boolean') options.managerHomeIsUser = value.options.managerHomeIsUser;
-  for (const key of ['homeTeamName', 'awayTeamName', 'managerHomeName', 'managerAwayName', 'managerOpponentName', 'managerUserClubName', 'managerOpponentClubId']) {
+  for (const key of ['homeTeamName', 'awayTeamName', 'managerHomeName', 'managerAwayName', 'managerOpponentName', 'managerUserClubName', 'managerUserName', 'managerOpponentClubId', 'playerClubName', 'playerOpponentName']) {
     if (typeof value.options?.[key] === 'string') options[key] = text(value.options[key], '', 80);
   }
   if (Array.isArray(value.options?.teamNames) && value.options.teamNames.length === 2) options.teamNames = value.options.teamNames.map(name => text(name, 'Team', 80));
   if (options.managerFixtureId && (options.mode !== 'manager' || options.managerRoster?.length !== 11 || options.opponentRoster?.length !== 11)) return null;
+  if (options.playerFixtureId && (options.mode !== 'player' || options.playerRoster?.length !== 11
+    || options.opponentRoster?.length !== 11 || !persistentId(options.playerHeroId))) return null;
+  const persistentPlayer = options.mode === 'player' && !!options.playerFixtureId;
   const snapshot = {
     version: 1, matchId: text(value.matchId, '', 100) || identifier(), resultRecorded: !!value.resultRecorded,
     options, players,
     ball: { x: b.x, y: b.y, z: b.z, vx: num(b.vx, 0, -300, 300), vy: num(b.vy, 0, -300, 300),
-      vz: num(b.vz, 0, -300, 300), owner: b.owner,
+      vz: num(b.vz, 0, -300, 300), spin: num(b.spin, 0, -1, 1), owner: b.owner,
       lastTouch: { team: b.lastTouch.team, playerId: b.lastTouch.playerId } },
     directions: Array.isArray(value.directions) && value.directions.length === 2
       && value.directions[0] === -value.directions[1] && Math.abs(value.directions[0]) === 1
@@ -192,8 +204,8 @@ function sanitizeSnapshot(value) {
     state: value.state, previousState: choose(value.previousState, STATES.filter((s) => s !== 'PAUSED'), 'IN_PLAY'),
     stateAge: num(value.stateAge), pausedStateAge: num(value.pausedStateAge, num(value.stateAge)),
     time: num(value.time), accumulator: num(value.accumulator, 0, 0, 2),
-    controlled: playerId(value.controlled) ? value.controlled : 6,
-    careerPlayer: playerId(value.careerPlayer) ? value.careerPlayer : 6,
+    controlled: playerId(value.controlled) || persistentPlayer && value.controlled === -1 ? value.controlled : 6,
+    careerPlayer: playerId(value.careerPlayer) || persistentPlayer && value.careerPlayer === -1 ? value.careerPlayer : 6,
     clock: { halfMinutes: options.halfMinutes, elapsed: num(value.clock.elapsed, 0, 0, 10000),
       half: value.clock.half === 2 ? 2 : 1, addedSeconds: num(value.clock.addedSeconds, 0, 0, 10000),
       stoppedSeconds: num(value.clock.stoppedSeconds, 0, 0, 10000),
@@ -217,11 +229,31 @@ function sanitizeSnapshot(value) {
       .filter(([id, count]) => playerId(Number(id)) && Number.isInteger(count) && count >= 0 && count < 10000)),
   };
   snapshot.cameraMode = choose(value.cameraMode, ['close', 'broadcast'], options.mode === 'player' ? 'close' : 'broadcast');
-  snapshot.hasPersistentRoster = value.hasPersistentRoster === true;
+  snapshot.hasPersistentRoster = persistentPlayer || value.hasPersistentRoster === true;
+  if (persistentPlayer) {
+    snapshot.hasPlayerCareerRoster = true;
+    snapshot.heroPersistentId = persistentId(value.heroPersistentId) ? value.heroPersistentId : options.playerHeroId;
+    if (snapshot.heroPersistentId !== options.playerHeroId) return null;
+    snapshot.playerCareerStatus = choose(value.playerCareerStatus, ['playing', 'bench', 'omitted', 'substituted', 'sent_off'], 'playing');
+    snapshot.playerCoachEntryMinute = num(value.playerCoachEntryMinute, options.playerEntryMinute ?? 60, 0, 130);
+    snapshot.playerCoachSubstitutionReason = text(value.playerCoachSubstitutionReason, '', 80);
+    for (const key of ['controlled', 'careerPlayer']) if (snapshot[key] >= 0 && players[snapshot[key]]?.persistentId !== snapshot.heroPersistentId) return null;
+  }
   snapshot.bench = rosterOf(value.bench);
   snapshot.departedPersistentIds = Array.isArray(value.departedPersistentIds) ? [...new Set(value.departedPersistentIds.filter(persistentId))].slice(0, 25) : [];
   const activeIds = players.filter(p => p.persistentId).map(p => p.persistentId);
+  if (persistentPlayer && activeIds.length !== 22) return null;
   if (new Set(activeIds).size !== activeIds.length || snapshot.bench.some(p => activeIds.includes(p.persistentId) || snapshot.departedPersistentIds.includes(p.persistentId))) return null;
+  if (persistentPlayer) {
+    const hero = players.find(p => p.persistentId === snapshot.heroPersistentId);
+    if (snapshot.playerCareerStatus === 'playing') {
+      if (!hero || hero.sentOff || snapshot.controlled !== hero.id || snapshot.careerPlayer !== hero.id) return null;
+    } else {
+      if (snapshot.controlled !== -1 || snapshot.careerPlayer !== -1) return null;
+      if (snapshot.playerCareerStatus === 'sent_off' ? !hero?.sentOff : !!hero) return null;
+      if (snapshot.playerCareerStatus === 'bench' && !snapshot.bench.some(p => p.persistentId === snapshot.heroPersistentId)) return null;
+    }
+  }
   snapshot.managerStats = managerStatsOf(value.managerStats);
   snapshot.substitutionEvents = Array.isArray(value.substitutionEvents) ? value.substitutionEvents.filter(isObject).slice(0, 10).map(event => ({
     outId: text(event.outId ?? event.outgoingPersistentId, '', 100), inId: text(event.inId ?? event.incomingPersistentId, '', 100),
@@ -230,9 +262,9 @@ function sanitizeSnapshot(value) {
     style: choose(event.style, ['private', 'supportive', 'public'], 'private'),
     outFitness: num(event.outFitness, 80, 0, 100), inFitness: num(event.inFitness, 80, 0, 100),
   })).filter(event => persistentId(event.outgoingPersistentId) && persistentId(event.incomingPersistentId)) : [];
-  snapshot.matchMeta = { fixtureId: text(value.matchMeta?.fixtureId ?? options.managerFixtureId, '', 100),
-    season: integer(value.matchMeta?.season ?? options.managerWorldSeason, 1, 1, 10000),
-    userClubId: text(value.matchMeta?.userClubId ?? options.managerUserClubId, '', 100) };
+  snapshot.matchMeta = { fixtureId: text(value.matchMeta?.fixtureId ?? options.managerFixtureId ?? options.playerFixtureId, '', 100),
+    season: integer(value.matchMeta?.season ?? options.managerWorldSeason ?? options.playerWorldSeason, 1, 1, 10000),
+    userClubId: text(value.matchMeta?.userClubId ?? options.managerUserClubId ?? options.playerUserClubId, '', 100) };
   if (isObject(value.lastAssistCandidate)) snapshot.lastAssistCandidate = {
     team: teamId(value.lastAssistCandidate.team) ? value.lastAssistCandidate.team : 0,
     playerId: playerId(value.lastAssistCandidate.playerId) ? value.lastAssistCandidate.playerId : null,
@@ -287,8 +319,35 @@ function safeDocumentShape(value) {
   }
   return true;
 }
+function validPlayerJourney(journey) {
+  if (journey === undefined || journey === null) return true;
+  if (!isObject(journey) || journey.version !== 1 || journey.heroId !== 'player-hero'
+    || !Number.isInteger(journey.season) || !finite(journey.season, 1, 10000)
+    || !Number.isInteger(journey.round) || !finite(journey.round, 0, 14)
+    || !Array.isArray(journey.clubs) || journey.clubs.length !== 8
+    || !Array.isArray(journey.players) || journey.players.length < 11 || journey.players.length > 600
+    || !Array.isArray(journey.fixtures) || journey.fixtures.length !== 56) return false;
+  const clubs = new Set(journey.clubs.map(club => club?.id));
+  const players = new Set(journey.players.map(player => player?.id));
+  const fixtureIds = new Set(journey.fixtures.map(fixture => fixture?.id));
+  if (clubs.size !== 8 || [...clubs].some(id => !persistentId(id))
+    || players.size !== journey.players.length || fixtureIds.size !== 56
+    || journey.clubId !== null && !clubs.has(journey.clubId)) return false;
+  const hero = journey.players.find(player => player?.id === journey.heroId);
+  if (!hero || hero.clubId !== journey.clubId) return false;
+  if (journey.players.some(player => !persistentId(player?.id)
+    || !clubs.has(player?.clubId) && !(player.id === journey.heroId && player.clubId === null))) return false;
+  if (journey.fixtures.some(fixture => !persistentId(fixture?.id)
+    || !clubs.has(fixture?.homeClubId) || !clubs.has(fixture?.awayClubId)
+    || fixture.homeClubId === fixture.awayClubId || !Number.isInteger(fixture.round)
+    || !finite(fixture.round, 0, 13))) return false;
+  if (journey.pendingFixtureId !== null && journey.pendingFixtureId !== undefined
+    && !fixtureIds.has(journey.pendingFixtureId)) return false;
+  return true;
+}
 function documentOf(data) {
-  if (!isObject(data) || data.version !== 1 || !safeDocumentShape(data)) return null;
+  if (!isObject(data) || data.version !== 1 || !safeDocumentShape(data)
+    || !validPlayerJourney(data.careers?.player?.journey)) return null;
   const suspended = sanitizeSnapshot(data.suspended);
   const save = { version: 1, profile: profileOf(data.profile), career: careerOf(data.career),
     careers: data.careers, suspended, suspendedByMode: suspendedModes(data.suspendedByMode, suspended) };
@@ -384,7 +443,7 @@ export function recordResult(save, engine) {
   ensureCareers(save);
   save.career = careerOf(save.career);
   if (engine.resultRecorded || save.career.recordedIds.includes(engine.matchId)) return false;
-  applyCareerMatch(save, engine);
+  if (!applyCareerMatch(save, engine)) return false;
   const score = two(engine.score).map(Math.floor);
   const result = score[0] === score[1] ? 'draw' : score[0] > score[1] ? 'win' : 'loss';
   save.career.played++;

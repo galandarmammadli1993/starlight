@@ -1,3 +1,5 @@
+import { normalizePlayerJourney } from './player-world.mjs';
+import { playerDecision, getPlayerMatchAttributes, applyPlayerSimulationResult } from './player-session.mjs';
 import { normalizeManagerWorld } from './manager-world.mjs';
 import { ensureManagerSimulation, managerDecision, syncManagerSummary, applyManagerSimulationResult } from './manager-session.mjs';
 /** Separate, deterministic life and club simulations. No browser dependency. */
@@ -24,16 +26,18 @@ function record(value) {
   const r = object(value);
   return Object.fromEntries(['played', 'won', 'drawn', 'lost', 'goals'].map(key => [key, integer(r[key])]));
 }
-function playerOf(value, old) {
+function playerOf(value, old, profile = {}) {
   const p = object(value), migrated = !value ? history(old?.results, 'player') : [];
   const results = history(p.results ?? migrated, 'player');
-  return {
+  const player = {
     day: integer(p.day, 1, 1), energy: number(p.energy, 85), fitness: number(p.fitness, 70), morale: number(p.morale, 70),
     skills: Object.fromEntries(SKILLS.map(key => [key, number(p.skills?.[key], 60)])),
     reputation: number(p.reputation, 10), balance: integer(p.balance, 1000), salary: integer(p.salary, 700, 0, 100000),
     appearances: integer(p.appearances, migrated.length), goals: integer(p.goals),
     results, activityLog: activity(p.activityLog), completedMatchIds: ids(p.completedMatchIds ?? results.map(r => r.id)),
   };
+  if(p.journey)player.journey=normalizePlayerJourney(p.journey,player,profile);
+  return player;
 }
 function managerOf(value, old) {
   const m = object(value), migrated = !value ? history(old?.results, 'manager') : [];
@@ -58,7 +62,7 @@ function managerOf(value, old) {
 /** Adds careers to legacy version-one saves without losing their shared history. */
 export function ensureCareers(save) {
   const existing = object(save.careers);
-  save.careers = { player: playerOf(existing.player, save.career), manager: managerOf(existing.manager, save.career) };
+  save.careers = { player: playerOf(existing.player, save.career, save.profile), manager: managerOf(existing.manager, save.career) };
   return save.careers;
 }
 export function getCareerView(save, mode) {
@@ -84,6 +88,7 @@ export function careerAction(save, mode, action) {
   if (!['player', 'manager'].includes(mode)) return { ok: false, message: 'Choose a career first.' };
   if (mode === 'player') {
     const p = careers.player;
+    if(p.journey)return playerDecision(p,save.profile??{},action);
     const train = { train_passing: ['passing', 18], train_shooting: ['shooting', 22], train_fitness: ['pace', 24] }[action];
     let message;
     if (train) {
@@ -125,6 +130,7 @@ export function setManagerPlan(save, plan) {
 }
 export function getPlayerAttributes(save) {
   const p = ensureCareers(save).player;
+  if(p.journey)return getPlayerMatchAttributes(p,save.profile??{});
   return { ...p.skills, fitness: p.fitness, energy: p.energy };
 }
 export function getManagerAttributes(save) {
@@ -145,6 +151,7 @@ export function applyCareerMatch(save, engine) {
   if (engine.state !== 'FULL_TIME' || !['player', 'manager'].includes(mode) || !engine.matchId) return false;
   const career = ensureCareers(save)[mode];
   if (career.completedMatchIds.includes(engine.matchId)) return false;
+  if(mode==='player'&&engine.options.playerFixtureId)return applyPlayerSimulationResult(career,engine,save.profile??{}).ok;
   if(mode==='manager'&&engine.options.managerFixtureId)return applyManagerSimulationResult(career,engine).ok;
   const score = [integer(engine.score?.[0]), integer(engine.score?.[1])];
   const result = score[0] > score[1] ? 'win' : score[0] === score[1] ? 'draw' : 'loss';
@@ -154,6 +161,7 @@ export function applyCareerMatch(save, engine) {
     career.appearances++;
     const goals = integer(engine.playerGoals?.[engine.careerPlayer]);
     career.goals += goals;career.energy = clamp(career.energy - 24, 0, 100);
+    if(career.journey){const j=career.journey;j.careerStats.appearances=career.appearances;j.careerStats.goals=career.goals;j.legacyResults=[structuredClone(career.results[0]),...(j.legacyResults??[])].slice(0,20);}
     career.balance += 120 + goals * 40;career.reputation = clamp(career.reputation + 1 + goals, 0, 100);
     career.morale = clamp(career.morale + (result === 'win' ? 8 : result === 'draw' ? 2 : -5), 0, 100);
     advanceLife(career);log(career, `Match completed: ${score.join('–')}. Appearance bonus €120${goals ? `; ${goals} personal goal(s)` : ''}.`, 'match');

@@ -29,7 +29,7 @@ def ready(page):
 
 def start_player(page):
     page.locator('[data-mode="player"]').click()
-    page.locator("#career-play").click()
+    page.locator("#player-dashboard [data-player-play]").click()
     page.wait_for_function("window.__football.engine.state==='IN_PLAY'")
     page.locator("#pitch").focus()
 
@@ -131,8 +131,10 @@ with sync_playwright() as p:
         # Start a fresh live request after screenshot capture; captures may span several real seconds.
         page.locator("#pitch").focus()
         arrange_call(page,"blocked")
-        page.keyboard.press("r")
+        # Hold movement before releasing the fixture with the actual R input.
+        # This avoids spending the short request window on browser protocol latency.
         page.keyboard.down("w")
+        page.keyboard.press("r")
         page.wait_for_function("window.__football.engine.controlledPlayer.y<29")
         page.keyboard.up("w")
         page.wait_for_function("window.__qaCallPhases.some(p=>p.status==='passed')")

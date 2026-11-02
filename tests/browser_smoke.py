@@ -7,6 +7,7 @@ all tested actions still pass through real keyboard, pointer and DOM handlers.
 """
 import json
 import os
+from time import monotonic
 from pathlib import Path
 from playwright.sync_api import sync_playwright, expect
 
@@ -173,7 +174,8 @@ with sync_playwright() as playwright:
         page.locator("#kit-color").select_option("blue")
         page.locator("#settings-form button[type=submit]").click()
         page.locator('[data-mode="player"]').click()
-        expect(page.locator("#career-hub")).to_be_visible()
+        expect(page.locator("#player-dashboard")).to_be_visible()
+        page.locator('[data-player-tab="training"]').click()
         expect(page.locator(".match-layout")).to_be_hidden()
         before = page.evaluate("structuredClone(window.__football.save.careers.player)")
         page.locator('[data-career-action="train_passing"]').click()
@@ -186,7 +188,7 @@ with sync_playwright() as playwright:
         page.screenshot(path=str(ARTIFACTS / "new-career-player.png"), full_page=True)
         passed("Player career has its own life dashboard; training/rest change day, skill and energy")
 
-        page.locator("#career-play").click()
+        page.locator("#player-dashboard [data-player-play]").click()
         page.wait_for_function("document.body.classList.contains('playing')")
         assert page.evaluate("window.__football.engine.controlledPlayer.role") == "DEF"
         assert page.evaluate("window.__football.engine.controlledPlayer.name") == "QA Defender"
@@ -256,10 +258,15 @@ with sync_playwright() as playwright:
         page.reload(wait_until="networkidle")
         page.wait_for_function("!!window.__football")
         page.locator('[data-mode="player"]').click()
-        expect(page.locator("#career-play")).to_contain_text("RESUME YOUR MATCH")
-        page.locator("#career-play").click()
+        expect(page.locator("#player-dashboard [data-player-play]")).to_contain_text("Saxlanmış matça qayıt")
+        saved_elapsed=page.evaluate("window.__football.save.suspendedByMode.player.clock.elapsed")
+        assert saved_elapsed==317.25
+        resumed_at=monotonic()
+        page.locator("#player-dashboard [data-player-play]").click()
         assert page.evaluate("window.__football.engine.score") == [2,1]
-        assert 317.25 <= page.evaluate("window.__football.engine.clock.elapsed") < 325
+        elapsed=page.evaluate("window.__football.engine.clock.elapsed")
+        rate=page.evaluate("window.__football.engine.clock.rate")
+        assert saved_elapsed<=elapsed<=saved_elapsed+(monotonic()-resumed_at)*rate+1
         assert page.evaluate("window.__football.engine.controlledPlayer.role") == "DEF"
         assert page.evaluate("window.__football.save.careers.manager.budget") == budget - 1200
         assert page.evaluate("window.__football.save.career.played") == 0
@@ -267,6 +274,12 @@ with sync_playwright() as playwright:
 
         page.evaluate("""()=>{
           const e=window.__football.engine;e.state='IN_PLAY';e.restart=null;e.pendingRestart=null;e.penaltyInProgress=false;e.deferredClockEvent=null;
+          // Arrange a completed individual report as well as the team score.
+          const hero=e.players.find(p=>p.persistentId===e.heroPersistentId);
+          const teammate=e.players.find(p=>p.team===0&&p.persistentId!==e.heroPersistentId);
+          e.managerStats[e.heroPersistentId].minutes=89.9;e.managerStats[e.heroPersistentId].goals=1;
+          e.managerStats[teammate.persistentId].minutes=89.9;e.managerStats[teammate.persistentId].goals=2;
+          e.playerGoals[hero.id]=1;e.playerGoals[teammate.id]=2;e.score=[3,1];
           Object.assign(e.clock,{half:2,elapsed:2699.99,stoppedSeconds:0,addedSeconds:0,halfEnded:false,finished:false});
         }""")
         page.wait_for_function("window.__football.engine.state==='FULL_TIME'")
@@ -274,6 +287,9 @@ with sync_playwright() as playwright:
         page.wait_for_timeout(300)
         page.locator("#menu-button").click()
         assert page.evaluate("window.__football.save.careers.player.appearances") == 1
+        assert page.evaluate("window.__football.save.careers.player.goals") == 1
+        assert page.evaluate("window.__football.save.careers.player.journey.careerStats.goals") == 1
+        assert page.evaluate("window.__football.save.careers.player.journey.round") == 1
         assert page.evaluate("window.__football.save.careers.manager.record.played") == 0
         assert page.evaluate("window.__football.save.suspendedByMode.player") is None
         assert page.evaluate("window.__football.save.suspendedByMode.manager.score") == [0,3]

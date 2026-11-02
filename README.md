@@ -44,6 +44,10 @@ Hold a pass, cross or shot action to increase power. The mobile joystick and act
 
 Player career is a separate personal-life journey: train skills, manage energy and recovery, earn salary, pay living costs and build reputation. On matchday control only the selected DEF, MID or FWD; off-ball passes are requests to an AI teammate, not remote kicks. Manager career is a separate club simulation: manage budget, team preparation, scouting, youth development, formation, approach and substitutions. All footballers play autonomously; manager input cannot move, pass, shoot or switch a player. Manager plans and career records are independent of player-life progress. Substitutions require a stoppage and are limited to five. Career results are recorded at full time. Main Menu saves unfinished matches independently for quick, player and manager modes. Returning to a mode offers its own Resume Match, without overwriting another career. Browser storage must be available for persistence.
 
+## Futbolçu karyerası
+
+Football Legacy-dən ilhamlanan ayrıca şəxsi karyera: klub/maaş/transfer/icarə, məşqçinin əsas heyət və ehtiyat qərarı, canlı ehtiyatdan giriş, fərdi statistika və inkişaf xalları, münasibətlər və şəxsi əşyalar. Saç, saqqal, buts və dəri tonu həqiqi 3D modelə tətbiq edilir. Nişanlı sürüşdürmə zərbəsi güc, falso və təmas nöqtəsini tək topun uçuşuna bağlayır. [Oynamaq, istinad və dəqiq imkanlar](docs/PLAYER_CAREER.md).
+
 ## Baş məşqçi karyerası
 
 **Baş məşqçi** seçərək doqquz bölməli qərargahı aç. Daimi heyət, liqa, skautinq/transfer, akademiya və maliyyəni idarə et; ulduz eqosu, gənclər/veteranlar, mentorluq, qruplaşma, intizam və media hadisələrinə qərar ver. Matçdan əvvəl, fasilədə və sonra çıxış üslubunu seç. Top dayananda həqiqi ehtiyat oyunçusu, əvəzetmə səbəbi və danışıq tərzi seçilir. Qərarlar fərdi etimada və meydandakı davranışa təsir edir. [Oynamaq və sistemlərin tam izahı](docs/MANAGER_CAREER.md).

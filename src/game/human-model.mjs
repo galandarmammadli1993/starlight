@@ -5,6 +5,7 @@ const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const geometryCache=new Map();
 const SKIN=['#c98e62','#976044','#dfb08a','#734b37','#c99772'];
 const HAIR=['#251e1b','#161b1c','#342722','#76563b'];
+const BOOTS={black:'#17232a',white:'#eef1e9',red:'#cd433e',gold:'#d0ac4d'};
 function cached(key,make){if(!geometryCache.has(key))geometryCache.set(key,make());return geometryCache.get(key);}
 function ellipsoid(rx,ry,rz,x=0,y=0,z=0){return new THREE.SphereGeometry(1,16,12).scale(rx,ry,rz).translate(x,y,z);}
 function combine(parts){for(const g of parts)g.deleteAttribute('uv');const result=mergeGeometries(parts,false);for(const g of parts)g.dispose();return result;}
@@ -25,6 +26,7 @@ function bodyGeometries(){
     neck:loft([[1.46,.058,.055],[1.57,.052,.051]]),
     head:combine([ellipsoid(.091,.123,.09,0,1.674,-.004),ellipsoid(.066,.05,.074,0,1.608,-.017),ellipsoid(.021,.027,.031,0,1.665,-.087),ellipsoid(.018,.033,.012,-.091,1.669,0),ellipsoid(.018,.033,.012,.091,1.669,0)]),
     hair:new THREE.SphereGeometry(1,16,9,0,Math.PI*2,0,Math.PI*.57).scale(.094,.13,.094).translate(0,1.681,.002),
+    beard:combine([ellipsoid(.067,.041,.013,0,1.611,-.075),ellipsoid(.029,.028,.014,-.057,1.637,-.061),ellipsoid(.029,.028,.014,.057,1.637,-.061)]),
     eyes:combine([ellipsoid(.011,.005,.005,-.032,1.695,-.084),ellipsoid(.011,.005,.005,.032,1.695,-.084)]),
     collar:new THREE.TorusGeometry(.061,.008,6,20).rotateX(Math.PI/2).translate(0,1.488,0),
     thigh:loft([[0,.085,.083],[-.09,.096,.083],[-.28,.078,.069],[-.42,.058,.06]]),
@@ -52,15 +54,15 @@ export function createHuman(player,kit,{material,label,shadow}={}){
   const shirtMat=mat(shirt),shortsMat=mat(shorts),skinMat=mat(skin);
   const torsoRoot=pivot('spine',group,0,0),torso=mesh(g.torso,shirtMat,torsoRoot),waist=mesh(g.pelvis,shortsMat,group);
   mesh(g.neck,skinMat,torsoRoot);const head=mesh(g.head,skinMat,torsoRoot);
-  mesh(g.hair,mat(HAIR[player.id%HAIR.length]),torsoRoot);mesh(g.eyes,mat('#2b2521'),torsoRoot);
+  const hair=mesh(g.hair,mat(HAIR[player.id%HAIR.length]),torsoRoot),beard=mesh(g.beard,mat(HAIR[player.id%HAIR.length]),torsoRoot);beard.visible=false;mesh(g.eyes,mat('#2b2521'),torsoRoot);
   const collar=mesh(g.collar,mat(kit.trim),torsoRoot);
-  const shirtParts=[torso],shortParts=[waist],limbs=[];
+  const shirtParts=[torso],shortParts=[waist],limbs=[],boots=[];
   for(const side of [-1,1]){
     const hip=pivot(`hip-${side}`,group,side*.101,.952);
     mesh(g.thigh,skinMat,hip);shortParts.push(mesh(g.shorts,shortsMat,hip));
     const knee=pivot(`knee-${side}`,hip,0,-.422);mesh(g.knee,skinMat,knee);
     const calf=mesh(g.calf,skinMat,knee);const sock=mesh(g.sock,shirtMat,knee);shirtParts.push(sock);
-    const ankle=pivot(`ankle-${side}`,knee,0,0);mesh(g.boot,mat('#17232a'),ankle);mesh(g.sole,mat('#c2c8c4'),ankle);
+    const ankle=pivot(`ankle-${side}`,knee,0,0);boots.push(mesh(g.boot,mat('#17232a'),ankle));mesh(g.sole,mat('#c2c8c4'),ankle);
     const shoulder=pivot(`shoulder-${side}`,torsoRoot,side*.233,1.422);
     shirtParts.push(mesh(g.sleeve,shirtMat,shoulder));mesh(g.upperArm,skinMat,shoulder);
     const elbow=pivot(`elbow-${side}`,shoulder,0,-.293);mesh(g.forearm,skinMat,elbow);
@@ -68,11 +70,25 @@ export function createHuman(player,kit,{material,label,shadow}={}){
   }
   const numberLabel=label?.(player.number);if(numberLabel){numberLabel.position.y=2.16;group.add(numberLabel);}
   const footShadow=shadow?.(.45,.28,.22);
-  return {group,torso,waist,head,collar,shirtParts,shortParts,torsoRoot,limbs,label:numberLabel,shadow:footShadow,number:player.number,kit:shirt};
+  const skinParts=[];group.traverse(part=>{if(part.isMesh&&part.material===skinMat)skinParts.push(part);});
+  const model={group,torso,waist,head,collar,hair,beard,boots,skinParts,material:mat,shirtParts,shortParts,torsoRoot,limbs,label:numberLabel,shadow:footShadow,number:player.number,kit:shirt};
+  applyAppearance(model,player);return model;
+}
+
+function applyAppearance(model,player){
+  const appearance=player.appearance??{},hair=['short','shaved','long'].includes(appearance.hair)?appearance.hair:'short';
+  const beard=appearance.beard==='short',boot=BOOTS[appearance.boots]??BOOTS.black;
+  const skin=SKIN[Number.isInteger(appearance.skin)&&appearance.skin>=0&&appearance.skin<SKIN.length?appearance.skin:player.id%SKIN.length];
+  const key=`${hair}/${beard}/${boot}/${skin}`;if(key===model.appearanceKey)return;
+  model.appearanceKey=key;model.hair.visible=hair!=='shaved';model.hair.scale.y=hair==='long'?1.08:1;model.hair.position.y=hair==='long'?-.128:0;
+  model.beard.visible=beard;
+  for(const part of model.boots)part.material=model.material(boot);
+  for(const part of model.skinParts)part.material=model.material(skin);
 }
 
 /** Multi-joint gait with knee flexion, planted-foot recovery and action poses. */
 export function updateHuman(model,player,time,engine={}){
+  applyAppearance(model,player);
   const speed=Math.hypot(player.vx||0,player.vy||0),run=clamp(speed/7.5,0,1),moving=clamp(speed/.65,0,1);
   const phase=time*(speed>5?12.5:9)+player.id*1.6;
   model.group.position.y=Math.abs(Math.sin(phase*2))*.018*run;
