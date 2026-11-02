@@ -1,3 +1,5 @@
+import { normalizeManagerWorld } from './manager-world.mjs';
+import { ensureManagerSimulation, managerDecision, syncManagerSummary, applyManagerSimulationResult } from './manager-session.mjs';
 /** Separate, deterministic life and club simulations. No browser dependency. */
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 const object = value => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -46,9 +48,10 @@ function managerOf(value, old) {
     tactic: tacticOptions.includes(m.tactic) ? m.tactic : 'balanced',
     teamFitness: number(m.teamFitness, 75), trainingLevel: number(m.trainingLevel, 0, 0, 20),
     scoutingReports: integer(m.scoutingReports, 0, 0, 100), youthLevel: integer(m.youthLevel, 0, 0, 10),
-    objective: 'Build a winning team and keep the club solvent.',
+    objective: 'Liqanı ilk dördlükdə bitir, gənclərə oyun vaxtı ver və klubun maliyyəsini qoru.',
     record: record(m.record ?? migratedRecord), results, activityLog: activity(m.activityLog),
     completedMatchIds: ids(m.completedMatchIds ?? results.map(r => r.id)),
+    ...(m.world ? { world: normalizeManagerWorld(m.world, m) } : {}),
   };
 }
 
@@ -100,30 +103,12 @@ export function careerAction(save, mode, action) {
     advanceLife(p);log(p, message, action);
     return { ok: true, message: `${message} Day ${p.day}. Living costs: €20.` };
   }
-  const m = careers.manager;
-  const plan = {
-    team_training: { cost: 500, message: 'Team session completed. Match preparation improved.' },
-    rest_team: { cost: 0, message: 'Squad given a rest day. Fitness and morale recovered.' },
-    scouting: { cost: 1200, message: 'Scouting report delivered. Board confidence improved.' },
-    youth: { cost: 5000, message: 'Youth development upgraded. Team technical ability improved.' },
-    recovery: { cost: 350, message: 'Recovery staff session completed. Team fitness improved.' },
-  }[action];
-  if (!plan) return { ok: false, message: 'Unknown club decision.' };
-  if (m.budget < plan.cost) return { ok: false, message: `Club budget is too low. This decision costs €${plan.cost}.` };
-  if (action === 'youth' && m.youthLevel >= 10) return { ok: false, message: 'Youth development is already at its maximum level.' };
-  m.budget -= plan.cost;m.day++;
-  if (action === 'team_training') { m.trainingLevel = clamp(m.trainingLevel + 1, 0, 20);m.teamFitness = clamp(m.teamFitness - 7, 0, 100);m.teamMorale = clamp(m.teamMorale + 2, 0, 100); }
-  if (action === 'rest_team') { m.teamFitness = clamp(m.teamFitness + 18, 0, 100);m.teamMorale = clamp(m.teamMorale + 4, 0, 100); }
-  if (action === 'recovery') m.teamFitness = clamp(m.teamFitness + 28, 0, 100);
-  if (action === 'scouting') {m.scoutingReports++;m.boardConfidence = clamp(m.boardConfidence + 1, 0, 100);}
-  if (action === 'youth') {m.youthLevel++;m.boardConfidence = clamp(m.boardConfidence + 3, 0, 100);}
-  log(m, plan.message, action);
-  return { ok: true, message: `${plan.message} Cost: €${plan.cost}.` };
+  return managerDecision(careers.manager, action);
 }
 export function setTrainingFocus(save, focus) {
   const m = ensureCareers(save).manager;
   if (!focusOptions.includes(focus)) return false;
-  m.trainingFocus = focus;return true;
+  m.trainingFocus = focus;if(m.world)m.world.plan.trainingFocus=focus;return true;
 }
 /** A club match plan never overwrites the personal player's match profile. */
 export function setManagerPlan(save, plan) {
@@ -135,6 +120,7 @@ export function setManagerPlan(save, plan) {
   const m = ensureCareers(save).manager;
   if (plan.formation !== undefined) m.formation = plan.formation;
   if (plan.tactic !== undefined) m.tactic = plan.tactic;
+  if(m.world){if(plan.formation!==undefined)m.world.plan.formation=plan.formation;if(plan.tactic!==undefined)m.world.plan.tactic=plan.tactic;}
   return true;
 }
 export function getPlayerAttributes(save) {
@@ -143,6 +129,7 @@ export function getPlayerAttributes(save) {
 }
 export function getManagerAttributes(save) {
   const m = ensureCareers(save).manager;
+  if(m.world){const w=ensureManagerSimulation(m),squad=w.lineup.map(id=>w.players.find(p=>p.id===id)).filter(Boolean);const avg=key=>squad.reduce((a,p)=>a+(p.attributes[key]??60),0)/Math.max(1,squad.length);syncManagerSummary(m);return {fitness:m.teamFitness,morale:m.teamMorale,passing:avg('passing'),shooting:avg('shooting'),defending:avg('defending')};}
   const base = 60 + m.trainingLevel * .6 + m.youthLevel;
   return {
     fitness: m.teamFitness, morale: m.teamMorale,
@@ -158,6 +145,7 @@ export function applyCareerMatch(save, engine) {
   if (engine.state !== 'FULL_TIME' || !['player', 'manager'].includes(mode) || !engine.matchId) return false;
   const career = ensureCareers(save)[mode];
   if (career.completedMatchIds.includes(engine.matchId)) return false;
+  if(mode==='manager'&&engine.options.managerFixtureId)return applyManagerSimulationResult(career,engine).ok;
   const score = [integer(engine.score?.[0]), integer(engine.score?.[1])];
   const result = score[0] > score[1] ? 'win' : score[0] === score[1] ? 'draw' : 'loss';
   career.completedMatchIds.push(engine.matchId);career.completedMatchIds = career.completedMatchIds.slice(-10000);

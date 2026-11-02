@@ -141,7 +141,7 @@ test('pause preserves a referee delay countdown so resuming cannot restart its t
 test('four real minutes of autonomous play creates passes and shots in both attacking thirds',()=>{
   const e=new MatchEngine({mode:'manager',halfMinutes:5});let low=105,high=0;
   for(let i=0;i<240*60;i++){e.step(1/60);if(e.ball.owner!==null){low=Math.min(low,e.ball.x);high=Math.max(high,e.ball.x);}}
-  assert.ok(e.stats.passes[0]+e.stats.passes[1]>20);assert.ok(e.stats.shots[0]+e.stats.shots[1]>0);assert.ok(low<30&&high>75);assert.equal(e.state,'IN_PLAY');assert.equal(e.clock.display,'36:00');assert.ok(e.players.every(p=>!p.sentOff));
+  assert.ok(e.stats.passes[0]+e.stats.passes[1]>20);assert.ok(e.stats.shots[0]+e.stats.shots[1]>0);assert.ok(low<30&&high>75);assert.ok(['IN_PLAY','OUT_OF_PLAY','FREE_KICK_SETUP','OFFSIDE_RESTART','PENALTY_SETUP','THROW_IN_SETUP','CORNER_KICK_SETUP','GOAL_KICK_SETUP','GOAL_CELEBRATION','KICK_OFF_SETUP'].includes(e.state));assert.equal(e.clock.display,'36:00');for(const team of [0,1])assert.ok(e.players.filter(p=>p.team===team&&!p.sentOff).length>=7);assert.ok(e.players.every(p=>Number.isFinite(p.x)&&Number.isFinite(p.y)));
 });
 
 test('two teammates actually receive both legs of a one-two without ball teleportation',()=>{

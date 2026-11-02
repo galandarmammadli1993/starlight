@@ -29,6 +29,10 @@ The supplied specification describes an overhaul of an existing Eleven Soccer ga
 - Replaced the old simple head/cylinder bodies with original authored 1.8m athletic models, shaped shoulders/waist, jaw/nose/ears, multi-joint legs and arms, and improved action poses. Shared geometry bounds memory. Clothing surface clearance is tested to avoid skin patches through socks.
 - Added a close sideline camera option. Models are procedural 3D figures; no external character assets were purchased or downloaded, and photorealistic people are not claimed.
 
+## Persistent manager career
+
+The manager dashboard now connects a persistent eight-club league and named player roster to real transfers, bench substitutions, individual match reports, wages and seasons. Character-sensitive dilemmas, groups, mentors, promises, fictional media, pre/half/post-match talks and substitution explanations affect actual engine mentality. Saved coach style is the default when continuing a speech without choosing a one-off style. Psychological clocks and outstanding commitments continue correctly when a new season starts. See [manager career scope](MANAGER_CAREER.md) for all playable systems and limits.
+
 ## Implemented and exercised
 
 - 22 players, formations 4-3-3 / 4-4-2 / 4-2-3-1 / 3-5-2, goalkeeper and position-based roles, wing width and defensive recovery.

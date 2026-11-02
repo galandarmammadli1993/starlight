@@ -1977,6 +1977,22 @@ dialog input,dialog select {
 .manager-command-buttons { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
 .manager-command-buttons button { border:1px solid #4a6249; padding:11px 10px; border-radius:4px; background:#2b3b2b; font-size:7px; letter-spacing:.5px; min-height:36px; }
 .manager-command-buttons button.active { background:#b8ef79; color:#263a1d; border-color:#b8ef79; }
+.manager-command-buttons button:disabled { opacity:.5; cursor:default; }
+.speed-label { display:flex; gap:8px; align-items:center; font-size:10px; color:#bbd6b4; }
+.speed-label select { padding:8px; width:70px; margin:0; }
+.manager-talk-summary { padding:14px 20px; background:#253c2a; color:#d2ebc0; font-size:12px; line-height:1.7; }
+.manager-talk-summary[hidden] { display:none; }
+.team-talk-dialog { width:min(760px,94vw); }
+.team-talk-choices { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin:20px 0; }
+.team-talk-choices button { text-align:left; padding:17px; background:#283d2c; border:1px solid #506c4e; border-radius:6px; }
+.team-talk-choices button b { display:block; font-size:15px; color:#d9eacb; margin-bottom:8px; }
+.team-talk-choices button small { display:block; color:#b0c3a8; line-height:1.6; font-size:12px; }
+.team-talk-choices button:hover:not(:disabled) { border-color:#b8ef79; }
+.team-talk-choices button:disabled { opacity:.45; cursor:default; }
+.team-talk-result { font-size:12px; line-height:1.8; color:#d9eacb; }
+#substitution-dialog>label { display:block; margin:20px 0 8px; color:#bed4b6; font-size:11px; }
+#substitution-dialog>select { width:100%; }
+@media(max-width:600px){.team-talk-choices{grid-template-columns:1fr}.team-talk-dialog{padding:22px}.team-talk-choices button{padding:14px}.manager-command-buttons button{min-height:42px}}
 .player-match-stat { margin:16px 0; padding:14px; background:#263b2b; border:1px solid #3f5d42; border-radius:5px; color:#c8eaa8; font-size:10px; letter-spacing:.6px; }
 #player-match-summary h3 { font-size:19px; font-weight:500; color:#e4eedc; margin:6px 0 19px; }
 .playing[data-mode=player] .panel-tabs>button:first-child { color:#cce7ac; }

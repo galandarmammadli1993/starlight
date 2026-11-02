@@ -2,6 +2,9 @@ import { MatchEngine } from './engine.mjs';
 import { ensureCareers, applyCareerMatch } from './career.mjs';
 
 export const SAVE_KEY = 'footba11-heroes-save-v1';
+export const BACKUP_SAVE_KEY = `${SAVE_KEY}-backup`;
+export const SAVE_BACKUP_KEY = BACKUP_SAVE_KEY;
+export const MAX_SAVE_CHARS = 8 * 1024 * 1024;
 export const DEFAULT_PROFILE = Object.freeze({
   name: 'Alex Hero', position: 'MID', shirtNumber: 10, kitColor: 'mint',
   halfMinutes: 12, formation: '4-3-3',
@@ -72,6 +75,57 @@ function attributesOf(value) {
   return Object.fromEntries(['pace', 'passing', 'shooting', 'defending', 'fitness', 'energy', 'morale']
     .filter(key => finite(value[key], 0, 100)).map(key => [key, value[key]]));
 }
+const persistentId = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}$/.test(value);
+function detailsOf(value, depth = 0) {
+  if (!isObject(value) || depth > 3) return {};
+  const out = {};
+  for (const [key, item] of Object.entries(value).slice(0, 60)) {
+    if (['__proto__', 'prototype', 'constructor'].includes(key)) continue;
+    if (typeof item === 'number' && Number.isFinite(item)) out[key] = Math.max(-10000, Math.min(10000, item));
+    else if (typeof item === 'string') out[key] = text(item, '', 160);
+    else if (typeof item === 'boolean' || item === null) out[key] = item;
+    else if (isObject(item)) out[key] = detailsOf(item, depth + 1);
+    else if (Array.isArray(item)) out[key] = item.slice(0, 30).filter(x => ['string', 'number', 'boolean'].includes(typeof x)).map(x => typeof x === 'string' ? text(x, '', 100) : typeof x === 'number' ? num(x, 0, -10000, 10000) : x);
+  }
+  return out;
+}
+function rosterPersonOf(value) {
+  if (!isObject(value)) return null;
+  const id = value.persistentId ?? value.id;
+  if (!persistentId(id)) return null;
+  return { id, persistentId: id, name: text(value.name, 'Player', 80),
+    clubId: text(value.clubId, '', 80), number: integer(value.number, 1, 1, 99),
+    role: choose(value.role, ['GK', 'DEF', 'MID', 'FWD'], 'MID'),
+    naturalRole: choose(value.naturalRole ?? value.role, ['GK', 'DEF', 'MID', 'FWD'], 'MID'),
+    age: integer(value.age, 24, 15, 50), attributes: attributesOf(value.attributes) ?? {},
+    morale: num(value.morale, 70, 0, 100), confidence: num(value.confidence, 70, 0, 100),
+    trust: num(value.trust, 60, 0, 100), experience: num(value.experience, 50, 0, 100),
+    fitness: num(value.fitness, 80, 0, 100), fatigue: num(value.fatigue, 0, 0, 100),
+    stamina: num(value.stamina, 80, 0, 100), injuryDays: integer(value.injuryDays, 0, 0, 365),
+    suspension: integer(value.suspension, 0, 0, 20), suspendedMatches: integer(value.suspendedMatches, 0, 0, 20),
+    status: text(value.status, 'rotation', 30), dominantFoot: choose(value.dominantFoot, ['left', 'right', 'both'], 'right'),
+    psych: detailsOf(value.psych), psychMatch: detailsOf(value.psychMatch), group: text(value.group, '', 80),
+  };
+}
+function rosterOf(value, limit = 25) {
+  if (!Array.isArray(value)) return [];
+  const ids = new Set();
+  return value.slice(0, limit).map(rosterPersonOf).filter(person => person && !ids.has(person.persistentId) && ids.add(person.persistentId));
+}
+function managerStatsOf(value) {
+  if (!isObject(value)) return {};
+  const out = {};
+  for (const [key, item] of Object.entries(value).slice(0, 60)) {
+    if (!persistentId(key) || !isObject(item)) continue;
+    out[key] = { persistentId: key, team: teamId(item.team) ? item.team : 0,
+      name: text(item.name, 'Player', 80), minutes: num(item.minutes, 0, 0, 160),
+      goals: integer(item.goals, 0, 0, 100), assists: integer(item.assists, 0, 0, 100),
+      passes: integer(item.passes, 0, 0, 10000), completedPasses: integer(item.completedPasses, 0, 0, 10000),
+      shots: integer(item.shots, 0, 0, 10000), yellow: integer(item.yellow, 0, 0, 2),
+      red: item.red === true || item.red === 1, rating: num(item.rating, 6, 0, 10), fitness: num(item.fitness, 80, 0, 100) };
+  }
+  return out;
+}
 function sanitizeSnapshot(value) {
   if (!isObject(value) || value.version !== 1 || !STATES.includes(value.state)
     || !Array.isArray(value.players) || value.players.length !== 22
@@ -82,7 +136,7 @@ function sanitizeSnapshot(value) {
     if (!isObject(p) || !playerId(p.id) || ids.has(p.id) || p.team !== Math.floor(p.id / 11)
       || !finite(p.x, -1000, 1000) || !finite(p.y, -1000, 1000)) return null;
     ids.add(p.id);
-    players.push({ id: p.id, team: p.team, number: integer(p.number, p.id % 11 + 1, 1, 99),
+    const player = { id: p.id, team: p.team, number: integer(p.number, p.id % 11 + 1, 1, 99),
       name: text(p.name, 'Player', 32), role: choose(p.role, ['GK', 'DEF', 'MID', 'FWD'], 'MID'),
       x: p.x, y: p.y, vx: num(p.vx, 0, -300, 300), vy: num(p.vy, 0, -300, 300),
       homeX: num(p.homeX, 52.5, -10, 115), homeY: num(p.homeY, 34, -10, 78),
@@ -91,7 +145,13 @@ function sanitizeSnapshot(value) {
       faceY: num(p.faceY, 0, -1, 1), animation: text(p.animation, 'idle', 20),
       animationTime: num(p.animationTime, 0, 0, 1000), substituted: !!p.substituted,
       challengeWait: num(p.challengeWait, 0, 0, 100), lastPassTime: num(p.lastPassTime, 0),
-    });
+      enteredAsSub: p.enteredAsSub === true,
+    };
+    if (persistentId(p.persistentId)) {
+      const person = rosterPersonOf(p);
+      for (const key of ['persistentId', 'naturalRole', 'attributes', 'age', 'morale', 'confidence', 'trust', 'experience', 'fitness', 'fatigue', 'psych', 'psychMatch', 'group']) player[key] = person[key];
+    }
+    players.push(player);
   }
   players.sort((a, b) => a.id - b.id);
   const b = value.ball;
@@ -105,6 +165,19 @@ function sanitizeSnapshot(value) {
     formation: choose(value.options?.formation, FORMATIONS, '4-3-3'), difficulty: 'normal' };
   if (attributesOf(value.options?.playerAttributes)) options.playerAttributes = attributesOf(value.options.playerAttributes);
   if (attributesOf(value.options?.teamAttributes)) options.teamAttributes = attributesOf(value.options.teamAttributes);
+  for (const key of ['managerRoster', 'managerBench', 'opponentRoster']) {
+    if (Array.isArray(value.options?.[key])) options[key] = rosterOf(value.options[key], key === 'managerBench' ? 25 : 11);
+  }
+  if (persistentId(value.options?.managerFixtureId)) options.managerFixtureId = value.options.managerFixtureId;
+  if (persistentId(value.options?.managerUserClubId)) options.managerUserClubId = value.options.managerUserClubId;
+  if (finite(value.options?.managerWorldSeason, 1, 10000)) options.managerWorldSeason = Math.floor(value.options.managerWorldSeason);
+  if (typeof value.options?.managerUserIsHome === 'boolean') options.managerUserIsHome = value.options.managerUserIsHome;
+  if (typeof value.options?.managerHomeIsUser === 'boolean') options.managerHomeIsUser = value.options.managerHomeIsUser;
+  for (const key of ['homeTeamName', 'awayTeamName', 'managerHomeName', 'managerAwayName', 'managerOpponentName', 'managerUserClubName', 'managerOpponentClubId']) {
+    if (typeof value.options?.[key] === 'string') options[key] = text(value.options[key], '', 80);
+  }
+  if (Array.isArray(value.options?.teamNames) && value.options.teamNames.length === 2) options.teamNames = value.options.teamNames.map(name => text(name, 'Team', 80));
+  if (options.managerFixtureId && (options.mode !== 'manager' || options.managerRoster?.length !== 11 || options.opponentRoster?.length !== 11)) return null;
   const snapshot = {
     version: 1, matchId: text(value.matchId, '', 100) || identifier(), resultRecorded: !!value.resultRecorded,
     options, players,
@@ -143,6 +216,29 @@ function sanitizeSnapshot(value) {
     playerGoals: Object.fromEntries(Object.entries(isObject(value.playerGoals) ? value.playerGoals : {})
       .filter(([id, count]) => playerId(Number(id)) && Number.isInteger(count) && count >= 0 && count < 10000)),
   };
+  snapshot.cameraMode = choose(value.cameraMode, ['close', 'broadcast'], options.mode === 'player' ? 'close' : 'broadcast');
+  snapshot.hasPersistentRoster = value.hasPersistentRoster === true;
+  snapshot.bench = rosterOf(value.bench);
+  snapshot.departedPersistentIds = Array.isArray(value.departedPersistentIds) ? [...new Set(value.departedPersistentIds.filter(persistentId))].slice(0, 25) : [];
+  const activeIds = players.filter(p => p.persistentId).map(p => p.persistentId);
+  if (new Set(activeIds).size !== activeIds.length || snapshot.bench.some(p => activeIds.includes(p.persistentId) || snapshot.departedPersistentIds.includes(p.persistentId))) return null;
+  snapshot.managerStats = managerStatsOf(value.managerStats);
+  snapshot.substitutionEvents = Array.isArray(value.substitutionEvents) ? value.substitutionEvents.filter(isObject).slice(0, 10).map(event => ({
+    outId: text(event.outId ?? event.outgoingPersistentId, '', 100), inId: text(event.inId ?? event.incomingPersistentId, '', 100),
+    outgoingPersistentId: text(event.outgoingPersistentId ?? event.outId, '', 100), incomingPersistentId: text(event.incomingPersistentId ?? event.inId, '', 100),
+    minute: num(event.minute, 0, 0, 160), reason: text(event.reason, 'tactical', 40),
+    style: choose(event.style, ['private', 'supportive', 'public'], 'private'),
+    outFitness: num(event.outFitness, 80, 0, 100), inFitness: num(event.inFitness, 80, 0, 100),
+  })).filter(event => persistentId(event.outgoingPersistentId) && persistentId(event.incomingPersistentId)) : [];
+  snapshot.matchMeta = { fixtureId: text(value.matchMeta?.fixtureId ?? options.managerFixtureId, '', 100),
+    season: integer(value.matchMeta?.season ?? options.managerWorldSeason, 1, 1, 10000),
+    userClubId: text(value.matchMeta?.userClubId ?? options.managerUserClubId, '', 100) };
+  if (isObject(value.lastAssistCandidate)) snapshot.lastAssistCandidate = {
+    team: teamId(value.lastAssistCandidate.team) ? value.lastAssistCandidate.team : 0,
+    playerId: playerId(value.lastAssistCandidate.playerId) ? value.lastAssistCandidate.playerId : null,
+    receiverId: playerId(value.lastAssistCandidate.receiverId) ? value.lastAssistCandidate.receiverId : null,
+    time: num(value.lastAssistCandidate.time),
+  };
   for (const stat of ['shots', 'passes', 'completed', 'possession', 'corners', 'fouls', 'offsides']) snapshot.stats[stat] = two(value.stats?.[stat]);
   const origin = value.restartOrigin;
   if (isObject(origin) && RESTART_TYPES.includes(origin.type) && teamId(origin.team)) snapshot.restartOrigin = {
@@ -178,28 +274,89 @@ function suspendedModes(value, legacy) {
   if (!isObject(value) && legacy && ['quick', 'player', 'manager'].includes(legacy.options.mode)) snapshots[legacy.options.mode] = legacy;
   return snapshots;
 }
-export function loadSave(storage) {
+function safeDocumentShape(value) {
+  const pending = [{ value, depth: 0 }];let visited = 0;
+  while (pending.length) {
+    const { value: item, depth } = pending.pop();
+    if (++visited > 350000 || depth > 40) return false;
+    if (!item || typeof item !== 'object') continue;
+    for (const [key, child] of Object.entries(item)) {
+      if (['__proto__', 'prototype', 'constructor'].includes(key)) return false;
+      if (child && typeof child === 'object') pending.push({ value: child, depth: depth + 1 });
+    }
+  }
+  return true;
+}
+function documentOf(data) {
+  if (!isObject(data) || data.version !== 1 || !safeDocumentShape(data)) return null;
+  const suspended = sanitizeSnapshot(data.suspended);
+  const save = { version: 1, profile: profileOf(data.profile), career: careerOf(data.career),
+    careers: data.careers, suspended, suspendedByMode: suspendedModes(data.suspendedByMode, suspended) };
+  ensureCareers(save);return save;
+}
+function parseDocument(raw, strict = false) {
   try {
-    const raw = storageOrDefault(storage)?.getItem(SAVE_KEY);
-    if (!raw || raw.length > 2_000_000) return emptySave();
-    const data = JSON.parse(raw);
-    if (!isObject(data) || data.version !== 1) return emptySave();
-    const suspended = sanitizeSnapshot(data.suspended);
-    const save = { version: 1, profile: profileOf(data.profile), career: careerOf(data.career),
-      careers: data.careers, suspended, suspendedByMode: suspendedModes(data.suspendedByMode, suspended) };
-    ensureCareers(save);return save;
-  } catch { return emptySave(); }
+    if (typeof raw !== 'string' || !raw || raw.length > MAX_SAVE_CHARS) return null;
+    const parsed = JSON.parse(raw);
+    if (strict && (!isObject(parsed?.profile) || !isObject(parsed?.careers) && !isObject(parsed?.career))) return null;
+    const world = parsed?.careers?.manager?.world;
+    if (world !== undefined && world !== null) {
+      if (!isObject(world) || world.version !== 1 || !Array.isArray(world.clubs) || world.clubs.length !== 8
+        || !Array.isArray(world.players) || world.players.length < 11 || world.players.length > 600
+        || !Array.isArray(world.fixtures) || world.fixtures.length !== 56 || !finite(world.budget, -1e7, 1e9)) return null;
+      const clubs = new Set(world.clubs.map(club => club?.id)), ids = new Set(world.players.map(player => player?.id));
+      if (clubs.size !== 8 || ids.size !== world.players.length || !clubs.has(world.userClubId)
+        || world.players.some(player => !persistentId(player?.id) || !clubs.has(player?.clubId))) return null;
+      const fixtureIds = new Set(world.fixtures.map(fixture => fixture?.id));
+      if (fixtureIds.size !== 56 || world.fixtures.some(fixture => !persistentId(fixture?.id)
+        || !clubs.has(fixture?.homeClubId) || !clubs.has(fixture?.awayClubId) || fixture.homeClubId === fixture.awayClubId)) return null;
+    }
+    return documentOf(parsed);
+  } catch { return null; }
+}
+/** Load the last valid document. A corrupt main save never destroys its backup. */
+export function loadSave(storage) {
+  const target = storageOrDefault(storage);
+  if (!target) return emptySave();
+  try {
+    const main = parseDocument(target.getItem(SAVE_KEY));
+    if (main) return main;
+  } catch { /* Blocked storage may still expose a valid backup via another binding. */ }
+  try {
+    const backup = parseDocument(target.getItem(SAVE_BACKUP_KEY));
+    if (backup) { backup.recoveredFromBackup = true;return backup; }
+  } catch { /* No usable persisted state. */ }
+  return emptySave();
 }
 export function saveData(data, storage) {
   try {
-    const target = storageOrDefault(storage);
-    if (!target || !isObject(data) || data.version !== 1) return false;
-    const suspended = sanitizeSnapshot(data.suspended);
-    const value = { version: 1, profile: profileOf(data.profile), career: careerOf(data.career),
-      careers: ensureCareers(data), suspended, suspendedByMode: suspendedModes(data.suspendedByMode, suspended) };
-    target.setItem(SAVE_KEY, JSON.stringify(value));
+    const target = storageOrDefault(storage), value = documentOf(data);
+    if (!target || !value) return false;
+    const serialized = JSON.stringify(value);
+    if (serialized.length > MAX_SAVE_CHARS) return false;
+    let previous = null;
+    try { previous = target.getItem(SAVE_KEY); } catch { /* Main write still reports failure below if blocked. */ }
+    if (previous && previous !== serialized && parseDocument(previous)) {
+      try { target.setItem(SAVE_BACKUP_KEY, previous); } catch { /* A full backup quota must not prevent a valid main overwrite. */ }
+    }
+    target.setItem(SAVE_KEY, serialized);
     return true;
   } catch { return false; }
+}
+/** Portable, normalized save. A null result means the source cannot be exported. */
+export function exportSave(data) {
+  try {
+    const value = documentOf(data);if (!value) return null;
+    const serialized = JSON.stringify(value, null, 2);
+    return serialized.length <= MAX_SAVE_CHARS ? serialized : null;
+  } catch { return null; }
+}
+/** Parse-only by default. Supply a storage object to atomically persist on success. */
+export function importSave(raw, storage) {
+  const save = parseDocument(raw, true);
+  if (!save) return null;
+  if (arguments.length > 1 && !saveData(save, storage)) return null;
+  return save;
 }
 export function captureMatch(engine) {
   if (!engine || !Array.isArray(engine.players)) return null;

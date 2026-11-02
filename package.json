@@ -9,7 +9,7 @@
     "build": "astro build",
     "preview": "astro preview",
     "astro": "astro",
-    "test": "node tests/rules.test.mjs && node tests/engine.test.mjs && node tests/storage.test.mjs && node tests/career.test.mjs && node tests/renderer.test.mjs && node tests/human-model.test.mjs"
+    "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
     "@astrojs/starlight": "^0.34.1",

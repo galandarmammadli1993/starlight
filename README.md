@@ -44,9 +44,13 @@ Hold a pass, cross or shot action to increase power. The mobile joystick and act
 
 Player career is a separate personal-life journey: train skills, manage energy and recovery, earn salary, pay living costs and build reputation. On matchday control only the selected DEF, MID or FWD; off-ball passes are requests to an AI teammate, not remote kicks. Manager career is a separate club simulation: manage budget, team preparation, scouting, youth development, formation, approach and substitutions. All footballers play autonomously; manager input cannot move, pass, shoot or switch a player. Manager plans and career records are independent of player-life progress. Substitutions require a stoppage and are limited to five. Career results are recorded at full time. Main Menu saves unfinished matches independently for quick, player and manager modes. Returning to a mode offers its own Resume Match, without overwriting another career. Browser storage must be available for persistence.
 
+## Baş məşqçi karyerası
+
+**Baş məşqçi** seçərək doqquz bölməli qərargahı aç. Daimi heyət, liqa, skautinq/transfer, akademiya və maliyyəni idarə et; ulduz eqosu, gənclər/veteranlar, mentorluq, qruplaşma, intizam və media hadisələrinə qərar ver. Matçdan əvvəl, fasilədə və sonra çıxış üslubunu seç. Top dayananda həqiqi ehtiyat oyunçusu, əvəzetmə səbəbi və danışıq tərzi seçilir. Qərarlar fərdi etimada və meydandakı davranışa təsir edir. [Oynamaq və sistemlərin tam izahı](docs/MANAGER_CAREER.md).
+
 ## Tests and scope
 
-`npm test` runs deterministic boundary, offside, clock, contact/foul, gameplay, formation, career-life, persistence and 3D camera/projection tests with individual test counts. `python tests/browser_smoke.py` runs the browser checks when Python Playwright and Chromium are installed; set `GAME_URL` or `CHROMIUM_PATH` to override their defaults.
+`npm test` discovers every `tests/*.test.mjs` suite and runs deterministic boundary, offside, clock, contact/foul, gameplay, formation, career-life, persistence and 3D camera/projection tests including persistent league, market, psychology and match-report integration. `python tests/browser_smoke.py` runs the browser checks when Python Playwright and Chromium are installed; set `GAME_URL` or `CHROMIUM_PATH` to override their defaults.
 
 The **Yaxın baxış / Geniş baxış** button switches between closer player framing and the broad sideline view. The original authored human models use adult anatomical proportions and articulated knees, elbows and ankles. They are procedural game figures, not scanned or photorealistic characters.
 

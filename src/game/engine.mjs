@@ -25,6 +25,7 @@ export class MatchEngine {
     this.ball={x:52.5,y:34,z:FIELD.ballRadius,vx:0,vy:0,vz:0,owner:null,lastTouch:{team:0,playerId:9}};
     for(let team=0;team<2;team++) for(let i=0;i<11;i++) this.players.push({id:team*11+i,team,number:i+1,name:NAMES[(i+team*3)%11],role:i===0?'GK':'MID',x:0,y:0,vx:0,vy:0,homeX:0,homeY:0,stamina:100,sentOff:false,yellow:0,timer:.2+i*.07,faceX:team? -1:1,faceY:0,animation:'idle',animationTime:0,substituted:false});
     this._assignFormation();
+    this.bench=[];this.substitutionEvents=[];this.departedPersistentIds=[];this.managerStats={};this._applyPersistentRosters();
     if(this.options.mode==='player') this.controlled=this.players.find(p=>p.team===0 && p.role===this.options.position)?.id??6;
     this.careerPlayer=this.controlled;
     if(this.options.mode==='player'&&this.options.playerAttributes)this.controlledPlayer.stamina=this._attributes(this.controlledPlayer).energy;
@@ -32,6 +33,56 @@ export class MatchEngine {
   }
   _log(type,message,data={}) { this.notification=message; this.lastDecision=message; this.eventLog.unshift({id:++this.sequence,time:this.clock.display,type,message,...data}); if(this.eventLog.length>80)this.eventLog.pop(); }
   _state(state){this.state=state;this.stateAge=0;}
+  _applyPersistentRosters(){
+    this.hasPersistentRoster=this.options.mode==='manager'&&Array.isArray(this.options.managerRoster)&&this.options.managerRoster.length===11;
+    if(!this.hasPersistentRoster)return;
+    for(const [team,roster]of [[0,this.options.managerRoster],[1,this.options.opponentRoster]]){
+      if(!Array.isArray(roster)||roster.length!==11)continue;
+      for(let slot=0;slot<11;slot++)this._copyIdentity(this.players[team*11+slot],roster[slot]);
+    }
+    this.bench=(this.options.managerBench??[]).filter(p=>p&&typeof p.id==='string').map(p=>structuredClone(p));
+    for(const p of this.players)this._ensureManagerStat(p);
+    this.matchMeta={fixtureId:this.options.managerFixtureId??null,season:this.options.managerWorldSeason??1,userClubId:this.options.managerUserClubId??'baku'};
+  }
+  _copyIdentity(target,source){
+    if(!source)return;
+    target.persistentId=String(source.persistentId??source.id);
+    target.name=String(source.name??target.name).slice(0,50);target.number=clamp(Math.round(finite(source.number,target.number)),1,99);
+    target.age=clamp(finite(source.age,25),16,45);target.naturalRole=source.role??target.role;
+    target.attributes=structuredClone(source.attributes??source.skills??{});
+    for(const key of ['morale','confidence','trust','experience','fitness','fatigue'])target[key]=clamp(finite(source[key],key==='experience'?finite(source.psych?.experience,70):key==='fatigue'?0:70),0,100);
+    target.psych=structuredClone(source.psych??{});target.group=String(source.group??'team');
+    target.psychMatch=structuredClone(source.psychMatch??source.matchPsychology??{});
+    target.stamina=clamp(target.fitness-target.fatigue*.45,15,100);
+    target.sentOff=false;target.yellow=0;target.substituted=false;
+  }
+  _ensureManagerStat(p){
+    if(!p?.persistentId)return null;
+    return this.managerStats[p.persistentId]??=( {persistentId:p.persistentId,team:p.team,name:p.name,minutes:0,goals:0,assists:0,passes:0,completedPasses:0,shots:0,yellow:0,red:false,rating:6,fitness:p.stamina} );
+  }
+  _trackManagerMinutes(dt){
+    if(!this.hasPersistentRoster)return;
+    for(const p of this.players){const stat=this._ensureManagerStat(p);if(!stat)continue;if(!p.sentOff)stat.minutes+=dt*this.clock.rate/60;stat.fitness=clamp(p.stamina,0,100);stat.yellow=p.yellow;stat.red=!!p.sentOff;}
+  }
+  get managerMatchReport(){
+    if(!this.hasPersistentRoster)return null;
+    for(const p of this.players){const stat=this._ensureManagerStat(p);if(stat){stat.fitness=clamp(p.stamina,0,100);stat.yellow=p.yellow;stat.red=!!p.sentOff;}}
+    const players=Object.values(this.managerStats).map(stat=>({...stat,minutes:Math.min(150,Math.round(stat.minutes*10)/10),rating:Math.round(clamp(6+stat.goals*.8+stat.assists*.5+stat.completedPasses*.015-stat.yellow*.15-(stat.red?1:0),3,10)*10)/10}));
+    return {...(this.matchMeta??{}),score:[...this.score],completed:this.state==='FULL_TIME',state:this.state,players,substitutions:structuredClone(this.substitutionEvents),events:this.eventLog.filter(e=>['FOUL','GOAL','SUBSTITUTION','ABANDONED'].includes(e.type)).map(e=>({...e}))};
+  }
+  updateManagerMentalState(roster){
+    if(this.options.mode!=='manager'||!this.hasPersistentRoster)return false;
+    const source=Array.isArray(roster)?roster:roster?.players??Object.entries(roster??{}).map(([id,value])=>({id,...value}));
+    let changed=0;
+    for(const p of [...this.players.filter(player=>player.team===0),...this.bench]){const next=source.find(item=>String(item.id??item.persistentId)===String(p.persistentId??p.id));if(!next)continue;
+      for(const key of ['morale','confidence','trust','experience'])if(Number.isFinite(next[key]))p[key]=clamp(next[key],0,100);
+      if(next.psych)p.psych={...p.psych,...structuredClone(next.psych)};
+      if(Number.isFinite(next.psych?.experience)&&!Number.isFinite(next.experience))p.experience=clamp(next.psych.experience,0,100);
+      if(next.psychMatch||next.matchPsychology)p.psychMatch=structuredClone(next.psychMatch??next.matchPsychology);
+      if(next.group)p.group=String(next.group);changed++;
+    }
+    return changed>0;
+  }
   _assignFormation(){
     for(let team=0;team<2;team++) {
       const teamFormation=team===0?this.formation:'4-3-3';
@@ -52,7 +103,27 @@ export class MatchEngine {
   }
   setFormation(formation){if(this.options.mode==='player'||!FORMATIONS[formation])return false;this.formation=formation;this._assignFormation();this._log('TACTIC',`Formation: ${formation}`);return true;}
   setTactic(tactic){if(this.options.mode==='player'||!['balanced','press','wide','counter'].includes(tactic))return false;this.tactic=tactic;this._log('TACTIC',`Tactic: ${tactic}`);return true;}
-  substitute(id=this.controlled){if(this.options.mode==='player')return false;const p=this.players.find(p=>p.id===id&&p.team===0);if(!p||p.sentOff||p.substituted||this.substitutions>=5||(this.state==='PAUSED'?this.previousState:this.state)==='IN_PLAY')return false;p.stamina=100;p.substituted=true;p.name='Academy '+(this.substitutions+1);this.substitutions++;this._log('SUBSTITUTION',`${p.name} enters for #${p.number}`);return true;}
+  substitute(id=this.controlled,incomingPersistentId=null,reason='tactical'){
+    if(this.options.mode==='player')return false;
+    const p=this.players.find(p=>p.id===id&&p.team===0),effectiveState=this.state==='PAUSED'?this.previousState:this.state;
+    if(!p||p.sentOff||p.substituted&&!this.hasPersistentRoster||this.substitutions>=5||effectiveState==='IN_PLAY'||['FULL_TIME','PRE_MATCH'].includes(effectiveState))return false;
+    if(this.hasPersistentRoster){
+      const eligible=this.bench.filter(candidate=>!this.departedPersistentIds.includes(String(candidate.id??candidate.persistentId))&&!(candidate.injuryDays>0)&&!(candidate.suspension>0)&&!(candidate.suspendedMatches>0));
+      const incomingId=incomingPersistentId??eligible.find(b=>b.role===p.naturalRole)?.id??eligible[0]?.id;
+      const incoming=eligible.find(candidate=>String(candidate.id??candidate.persistentId)===String(incomingId));
+      if(!incoming||this.departedPersistentIds.includes(String(incoming.id))||incoming.injuryDays>0||incoming.suspension>0||incoming.suspendedMatches>0)return false;
+      const outId=p.persistentId,outName=p.name,outNumber=p.number,minute=this.matchMinute;
+      const outgoingStat=this._ensureManagerStat(p);
+      Object.assign(outgoingStat,{fitness:clamp(p.stamina,0,100),yellow:p.yellow,red:!!p.sentOff});
+      this.departedPersistentIds.push(outId);
+      this.bench=this.bench.filter(b=>String(b.id??b.persistentId)!==String(incoming.id??incoming.persistentId));
+      this._copyIdentity(p,incoming);p.enteredAsSub=true;p.vx=p.vy=0;
+      this._ensureManagerStat(p);
+      const event={outId,inId:p.persistentId,outgoingPersistentId:outId,incomingPersistentId:p.persistentId,minute,reason:String(reason).slice(0,60),outFitness:this.managerStats[outId].fitness,inFitness:p.stamina};
+      this.lastAssistCandidate=null;this.substitutionEvents.push(event);this.substitutions++;this._log('SUBSTITUTION',`${p.name} enters for ${outName}`,event);return true;
+    }
+    p.stamina=100;p.substituted=true;p.name='Academy '+(this.substitutions+1);this.substitutions++;this._log('SUBSTITUTION',`${p.name} enters for #${p.number}`);return true;
+  }
   selectTarget(id){if(this.options.mode==='manager')return false;const p=this.players.find(p=>p.id===id);if(p&&p.team===0&&!p.sentOff&&p.id!==this.controlled){this.selectedTarget=id;return true;}return false;}
   pause(){if(this.state==='PAUSED')return;this.previousState=this.state;this.pausedStateAge=this.stateAge;this._state('PAUSED');}
   resume(){if(this.state==='PAUSED'){const age=this.pausedStateAge??0;this._state(this.previousState??'IN_PLAY');this.stateAge=age;this.pausedStateAge=null;}}
@@ -86,7 +157,7 @@ export class MatchEngine {
   }
   _endPeriod(event){this.ball.vx=this.ball.vy=this.ball.vz=0;this.ball.owner=null;this.restart=null;this.pendingRestart=null;this.keeperHold=null;this.penaltyInProgress=false;this.deferredClockEvent=null;this.offside=null;this.restartOrigin=null;this.passRequest=null;this.selectedTarget=null;this._state(event);this._log(event,event==='HALF_TIME'?'Half-time · switch ends':'Full-time');}
   _fixedStep(dt){
-    this.time+=dt;this.stateAge+=dt;
+    this.time+=dt;this.stateAge+=dt;this._trackManagerMinutes(dt);
     for(const p of this.players){p.animationTime=Math.max(0,p.animationTime-dt);if(!p.animationTime)p.animation='run';}
     if(this.state==='OUT_OF_PLAY'){if(this.stateAge>.85)this._setupRestart(this.pendingRestart);return;}
     if(this.state==='GOAL_CELEBRATION'){if(this.stateAge>2.6)this._setupRestart(this.pendingRestart);return;}
@@ -117,9 +188,18 @@ export class MatchEngine {
     }
   }
   _attributes(p){
-    const values=p.team===0?(this.options.mode==='player'&&p.id===this.careerPlayer?this.options.playerAttributes:this.options.mode==='manager'?this.options.teamAttributes:null):null;
+    const values=p.attributes??(p.team===0?(this.options.mode==='player'&&p.id===this.careerPlayer?this.options.playerAttributes:this.options.mode==='manager'?this.options.teamAttributes:null):null);
     if(!values)return null;
-    return Object.fromEntries(['pace','passing','shooting','defending','fitness','energy'].map(key=>[key,clamp(finite(values[key],key==='pace'?finite(values.fitness,70):key==='energy'?100:70),0,100)]));
+    const mentalSource=p.persistentId?p:values;
+    const morale=clamp(finite(mentalSource.morale,70),0,100),confidence=clamp(finite(mentalSource.confidence,70),0,100),trust=clamp(finite(mentalSource.trust,70),0,100);
+    const experience=clamp(finite(p.experience,70),0,100),stress=clamp(finite(p.psych?.stress,30),0,100);
+    const focus=clamp(finite(p.psychMatch?.focus,50+(morale-50)*.2+(confidence-50)*.2+(trust-50)*.15+(experience-50)*.15-(stress-30)*.15),15,100);
+    const cooperation=clamp(finite(p.psychMatch?.cooperation,(trust+morale+finite(p.psych?.loyalty,70))/3),10,100);
+    const discipline=clamp(finite(p.psychMatch?.discipline,(finite(p.psych?.professionalism,70)+experience+trust)/3),10,100);
+    const mental=clamp((morale-70)*.06+(confidence-70)*.045+(trust-70)*.035+(focus-70)*.025,-12,8);
+    const attrs=Object.fromEntries(['pace','passing','shooting','defending','fitness','energy'].map(key=>[key,clamp(finite(values[key],key==='pace'?finite(values.fitness,70):key==='energy'?100:70),0,100)]));
+    for(const key of ['passing','shooting','defending'])attrs[key]=clamp(attrs[key]+mental,5,100);
+    return {...attrs,morale,confidence,trust,experience,focus,cooperation,discipline,mental};
   }
   _nearest(team,point,excludeKeeper=true){let best=null,min=Infinity;for(const p of this.players){if(p.team!==team||p.sentOff||(excludeKeeper&&p.role==='GK'))continue;const d=distance(p,point);if(d<min){min=d;best=p;}}return best;}
   _movePlayers(dt){
@@ -144,7 +224,7 @@ export class MatchEngine {
           tx=clamp(p.homeX+shift*dir,7,98);
           ty=clamp(p.homeY+(this.ball.y-34)*.14,4,64);
           if(p.role==='FWD'&&ownBall){tx=clamp(this.ball.x+dir*15,8,97);if(Math.abs(p.homeY-34)>12)ty=p.homeY;}
-          if(p.role==='DEF'&&ownBall&&(p.homeY<12||p.homeY>56)&&this.tactic==='wide')tx=clamp(tx+dir*16,5,100);
+          if(p.role==='DEF'&&ownBall&&(p.homeY<12||p.homeY>56)&&p.team===0&&this.tactic==='wide')tx=clamp(tx+dir*16,5,100);
           if(this.tactic==='wide'&&p.team===0&&Math.abs(p.homeY-34)>12)ty=p.homeY<34?5:63;
           if(this.tactic==='counter'&&p.team===0&&p.role==='FWD')tx=clamp(tx+dir*8,5,100);
           if(chasers[p.team]?.id===p.id&&(!ownBall||!owner)) {tx=this.ball.x;ty=this.ball.y;sprint=true;}
@@ -163,7 +243,7 @@ export class MatchEngine {
       }
       const mag=length(mx,my);if(mag>1){mx/=mag;my/=mag;}
       const attributes=this._attributes(p);
-      const speed=(sprint?8.1:5.3)*(p.stamina<20?.82:1)*(attributes?1+(attributes.pace-70)*.003:1);
+      const speed=(sprint?8.1:5.3)*(p.stamina<20?.82:1)*(attributes?(1+(attributes.pace-70)*.003)*(1+(attributes.morale-70)*.0008+(attributes.focus-70)*.0005):1);
       const response=Math.min(1,dt*(mag>0?9:7));
       p.vx+=(mx*speed-p.vx)*response;p.vy+=(my*speed-p.vy)*response;
       p.x=clamp(p.x+p.vx*dt,-1.5,106.5);p.y=clamp(p.y+p.vy*dt,-1.5,69.5);
@@ -217,7 +297,13 @@ export class MatchEngine {
       const ownPenalty=this.directions[p.team]===1?p.x<16.5:p.x>88.5;
       const teammateKick=b.lastTouch?.team===p.team&&this.restartOrigin?.type!=='OPPONENT';
       if(p.role==='GK'&&ownPenalty&&Math.abs(p.y-34)<20.16&&!teammateKick){
-        this._receive(p,true);this._log('SAVE',`${p.team===0?'Baku Athletic':'Coast United'} goalkeeper catches`);return;
+        const keeperAttributes=this._attributes(p),shotSpeed=length(b.vx,b.vy),handling=keeperAttributes?.defending??70;
+        if(shotSpeed>25+handling*.08&&(distance(p,b)>.7||b.z>1.9)){
+          b.vx=this.directions[p.team]*Math.max(5,Math.abs(b.vx)*.32);b.vy=(b.y>=34?1:-1)*(5+shotSpeed*.12);b.vz=2.5;
+          b.lastTouch={team:p.team,playerId:p.id};this.lastKicker=p.id;this.kickCooldown=.3;this.restartOrigin=null;p.animation='save';p.animationTime=.5;
+          this._log('SAVE',`${p.team===0?'Baku Athletic':'Coast United'} goalkeeper parries`,{playerId:p.id,persistentId:p.persistentId??null,outcome:'parry'});return;
+        }
+        p.animation='catch';p.animationTime=.5;this._receive(p,true);this._log('SAVE',`${p.team===0?'Baku Athletic':'Coast United'} goalkeeper catches`,{playerId:p.id,persistentId:p.persistentId??null,outcome:'catch'});return;
       }
       if(b.z>1.35){
         this.restartOrigin=null; // This player's legal touch ends a direct-restart exception.
@@ -234,7 +320,7 @@ export class MatchEngine {
   }
   _receive(p,keeper=false){
     const previous=this.ball.lastTouch;this.ball.owner=p.id;this.ball.lastTouch={team:p.team,playerId:p.id};
-    if(previous?.team===p.team&&previous.playerId!==p.id)this.stats.completed[p.team]++;
+    if(previous?.team===p.team&&previous.playerId!==p.id){this.stats.completed[p.team]++;const passer=this.players[previous.playerId],individual=this._ensureManagerStat(passer);if(individual)individual.completedPasses++;this.lastAssistCandidate={team:p.team,playerId:previous.playerId,receiverId:p.id,time:this.time};}
     if(previous?.team!==p.team&&!keeper)this.offside=null; // Deliberately controlling an opponent's pass resets Law 11.
     if(this.restartOrigin&&previous?.playerId!==p.id)this.restartOrigin=null;
     this.ball.vx=p.vx;this.ball.vy=p.vy;this.ball.vz=0;this.ball.z=keeper?1.1:FIELD.ballRadius;
@@ -252,19 +338,22 @@ export class MatchEngine {
     if(!owner)return;
     if(owner.id===this.controlled&&this.options.mode!=='manager')return;
     owner.timer-=dt;if(owner.timer>0)return;
-    owner.timer=.7;
+    const decisionAttributes=this._attributes(owner);owner.timer=.7*(decisionAttributes?clamp(1.3-decisionAttributes.focus*.0045,.75,1.3):1);
     if(this.keeperHold===owner.id){if(this.keeperTime>1.5)this._kick(owner,'pass',.65);return;}
     const goalX=this.directions[owner.team]===1?105:0,goalDistance=length(goalX-owner.x,34-owner.y);
     const opponent=this._nearest(other(owner.team),owner);
     if(goalDistance<34&&Math.abs(owner.y-34)<24){this._kick(owner,'shoot',.65);return;}
     if(Math.abs(owner.y-34)>20&&Math.abs(goalX-owner.x)<43){this._kick(owner,'cross',.65);return;}
-    if((opponent&&distance(opponent,owner)<2.5)||owner.timer===.7&&this.time-(owner.lastPassTime??0)>3.8){this._kick(owner,'pass',.6);owner.lastPassTime=this.time;}
+    if((opponent&&distance(opponent,owner)<2.5)||this.time-(owner.lastPassTime??0)>3.8){this._kick(owner,'pass',.6);owner.lastPassTime=this.time;}
   }
   _defendAI(dt){
     const owner=this.ball.owner!==null?this.players[this.ball.owner]:null;if(!owner||this.keeperHold===owner.id)return;
     const defender=this._nearest(other(owner.team),owner);if(!defender||defender.id===this.controlled&&this.options.mode!=='manager')return;
     defender.challengeWait=Math.max(0,(defender.challengeWait??0)-dt);
-    if(distance(defender,owner)<1.25&&distance(defender,this.ball)<1.05&&length(defender.vx-owner.vx,defender.vy-owner.vy)<8&&defender.challengeWait===0){defender.challengeWait=1.2;this._tackle(defender);}
+    const attrs=this._attributes(defender),discipline=attrs?.discipline??70;
+    // Timing and a real close contact decide legality; AI no longer filters out every foul beforehand.
+    const contactDistance=discipline<45?1.85:1.55;
+    if(distance(defender,owner)<contactDistance&&defender.challengeWait===0){defender.challengeWait=1.1+discipline*.006;this._tackle(defender);}
   }
   _chooseTarget(p,kind){
     if(this.oneTwoRunner!==undefined&&this.oneTwoRunner!==null&&p.id!==this.oneTwoRunner){const runner=this.players[this.oneTwoRunner];if(runner&&!runner.sentOff&&runner.team===p.team)return runner;}
@@ -274,6 +363,7 @@ export class MatchEngine {
       let value=(mate.x-p.x)*dir*1.15-Math.abs(d-(kind==='cross'?27:16))*.65;
       const marker=this._nearest(other(p.team),mate);value+=Math.min(marker?distance(marker,mate):10,10)*1.5;
       if(kind==='cross')value-=Math.abs(mate.y-34)*.85;
+      const psychology=this._attributes(p);if(psychology){value+=(this._attributes(mate)?.cooperation??70)*.012;if(p.group&&p.group===mate.group)value+=Math.max(0,100-finite(p.psych?.professionalism,70))*.012;}
       // Reward open lanes and permit backward or diagonal support instead of nearest-player snapping.
       for(const def of this.players){if(def.team===p.team||def.sentOff)continue;const dx=mate.x-p.x,dy=mate.y-p.y,t=((def.x-p.x)*dx+(def.y-p.y)*dy)/(d*d);if(t>.1&&t<.9&&length(def.x-p.x-t*dx,def.y-p.y-t*dy)<2)value-=14;}
       if(value>score){score=value;best=mate;}
@@ -308,6 +398,7 @@ export class MatchEngine {
     b.owner=null;b.lastTouch={team:p.team,playerId:p.id};this.lastKicker=p.id;this.kickCooldown=.25;this.keeperHold=null;
     p.animation=kind==='cross'?'cross':kind==='shoot'?'shoot':'pass';p.animationTime=.35;
     this.offside=createOffsideSnapshot(this.players,b,p.team,this.directions,this.restartOrigin?.untouched?this.restartOrigin.type:'OPEN_PLAY');
+    const individual=this._ensureManagerStat(p);if(individual){if(kind==='shoot')individual.shots++;else individual.passes++;}
     if(kind==='shoot'){this.stats.shots[p.team]++;this._log('SHOT','Shot toward goal');}
     else{this.stats.passes[p.team]++;if(p.id===this.controlled)this._log('PASS',kind==='cross'?'Cross into the area':kind==='through'?'Through ball':kind==='clear'?'Ball cleared':'Pass played');}
     if(this.oneTwoRunner!==undefined&&this.oneTwoRunner!==null&&this.oneTwoRunner!==p.id){const runner=this.players[this.oneTwoRunner];if(runner?.team===p.team){this.selectedTarget=runner.id;this.oneTwoRunner=null;}}
@@ -414,7 +505,7 @@ export class MatchEngine {
     if(!decision)return false;
     if(decision.card==='RED'||decision.card==='SECOND_YELLOW')p.sentOff=true;
     if(decision.card==='YELLOW'||decision.card==='SECOND_YELLOW')p.yellow++;
-    this._log('FOUL',`${decision.card?decision.card.replaceAll('_',' ')+' · ':''}${decision.type==='PENALTY'?'Penalty':'Direct free kick'}`);
+    this._log('FOUL',`${decision.card?decision.card.replaceAll('_',' ')+' · ':''}${decision.type==='PENALTY'?'Penalty':'Direct free kick'}`,{team:p.team,playerId:p.id,persistentId:p.persistentId??null,card:decision.card,reason:'contact'});
     const dir=this.directions[p.team];
     this._stop({...decision,x:decision.type==='PENALTY'?(dir===1?11:94):target.x,y:decision.type==='PENALTY'?34:target.y});
     if(p.sentOff&&p.team===0&&this.options.mode==='quick'){const next=this._nearest(0,this.ball);if(next)this.controlled=next.id;}
@@ -427,7 +518,7 @@ export class MatchEngine {
     if(event.type==='GOAL'){
       this.score[event.team]++;
       const scorer=this.ball.lastTouch?.team===event.team?this.ball.lastTouch.playerId:null;
-      if(Number.isInteger(scorer))this.playerGoals[scorer]=(this.playerGoals[scorer]??0)+1;
+      if(Number.isInteger(scorer)){this.playerGoals[scorer]=(this.playerGoals[scorer]??0)+1;const stat=this._ensureManagerStat(this.players[scorer]);if(stat)stat.goals++;const assist=this.lastAssistCandidate;if(assist&&assist.team===event.team&&assist.receiverId===scorer&&this.time-assist.time<12){const passer=this._ensureManagerStat(this.players[assist.playerId]);if(passer)passer.assists++;}}
       this._log('GOAL',`${event.team===0?'Baku Athletic':'Coast United'} score!`,{team:event.team,playerId:scorer});
       if(this.deferredClockEvent){this._endPeriod(this.deferredClockEvent);return;}
       this.pendingRestart={type:'KICK_OFF',team:other(event.team),x:52.5,y:34};this._state('GOAL_CELEBRATION');
@@ -440,7 +531,7 @@ export class MatchEngine {
   _setupRestart(event){
     if(!event||!Number.isFinite(event.x)||!Number.isFinite(event.y)||![0,1].includes(event.team))return false;
     const r={...event,x:clamp(event.x,0,105),y:clamp(event.y,0,68)};
-    this.restart=r;this.pendingRestart=null;this.penaltyInProgress=false;this.passRequest=null;this.delayWarned=false;this.offside=null;this.keeperHold=null;this.selectedTarget=null;
+    this.restart=r;this.lastAssistCandidate=null;this.pendingRestart=null;this.penaltyInProgress=false;this.passRequest=null;this.delayWarned=false;this.offside=null;this.keeperHold=null;this.selectedTarget=null;
     const states={KICK_OFF:'KICK_OFF_SETUP',THROW_IN:'THROW_IN_SETUP',CORNER_KICK:'CORNER_KICK_SETUP',GOAL_KICK:'GOAL_KICK_SETUP',FREE_KICK:'FREE_KICK_SETUP',DIRECT_FREE_KICK:'FREE_KICK_SETUP',INDIRECT_FREE_KICK:'OFFSIDE_RESTART',PENALTY:'PENALTY_SETUP'};
     this._state(states[r.type]??'FREE_KICK_SETUP');
     const dir=this.directions[r.team];

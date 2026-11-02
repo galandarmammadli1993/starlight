@@ -1,7 +1,11 @@
 import { MatchEngine } from './engine.mjs';
 import { PitchRenderer } from './renderer.mjs';
-import { loadSave, saveData, captureMatch, restoreMatch, recordResult } from './storage.mjs';
+import { loadSave, saveData, captureMatch, restoreMatch, recordResult, exportSave, importSave } from './storage.mjs';
 import { ensureCareers, getCareerView, getPlayerAttributes, getManagerAttributes, careerAction, setTrainingFocus, setManagerPlan } from './career.mjs';
+
+import { renderManagerDashboard } from './manager-ui.mjs';
+import { ensureManagerSimulation, managerDecision, managerMatchOptions, refreshManagerPsychology } from './manager-session.mjs';
+import { advanceSimulation } from './game-loop.mjs';
 
 const $ = id => document.getElementById(id);
 const all = query => [...document.querySelectorAll(query)];
@@ -22,6 +26,9 @@ let finishedSaved = null;
 let dialogResume = false;
 let lastLineupSignature = '';
 let lastEventSequence = -1;
+let managerSpeed = 1;
+let talkContinue = null;
+let pendingSubSlot = null;
 const keys = new Set();
 const charges = new Map();
 const input = { x:0, y:0, sprint:false, press:false, shield:false };
@@ -31,15 +38,105 @@ let touchPress = false;
 const canvas = $('pitch');
 const renderer = new PitchRenderer(canvas);
 
-function options() { return { halfMinutes:save.profile.halfMinutes, position:save.profile.position, formation:mode==='manager'?getCareerView(save,'manager').formation:save.profile.formation, mode,
-  ...(mode==='player'?{playerAttributes:getPlayerAttributes(save)}:mode==='manager'?{teamAttributes:getManagerAttributes(save)}:{}) }; }
+function currentManager() { return ensureCareers(save).manager; }
+function options() {
+  const base = { halfMinutes:save.profile.halfMinutes, position:save.profile.position, formation:save.profile.formation, mode };
+  if(mode==='manager') {
+    const prepared=managerMatchOptions(currentManager());
+    if(prepared.ok)return {...base,...prepared.options};
+    return {...base,formation:currentManager().formation};
+  }
+  return {...base,...(mode==='player'?{playerAttributes:getPlayerAttributes(save)}:{})};
+}
+function updateManagerMental() {
+  const world=ensureManagerSimulation(currentManager());
+  refreshManagerPsychology(world);
+  if(started&&mode==='manager')engine.updateManagerMentalState(world.players.filter(p=>p.clubId===world.userClubId));
+}
+function executeManagerCommand(action,payload={}) {
+  if(suspendedFor('manager')&&!started&&!['tactic','coach_style'].includes(action))return {ok:false,message:'Davam edən matç var. Əvvəlcə “Matça keç” ilə onu tamamla.'};
+  const result=managerDecision(currentManager(),action,payload);
+  if(result.ok){updateManagerMental();const saved=persist(started);renderCareer();if(!saved)toast('Dəyişiklik tətbiq edildi, yaddaşa yazılmadı. “Yaddaşı çıxar” ilə surət götür.');}
+  else toast(result.message);
+  return result;
+}
+function exportProgress() {
+  persist();const data=exportSave(save);
+  if(!data){toast('Yaddaş faylı hazırlana bilmədi.');return;}
+  const url=URL.createObjectURL(new Blob([data],{type:'application/json'}));
+  const link=document.createElement('a');link.href=url;link.download='footba11-heroes-save.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+function requestManagerPlay() {
+  if(suspendedFor('manager')){launchMatch();return;}
+  const prepared=managerMatchOptions(currentManager());
+  if(!prepared.ok){toast(prepared.message);return;}
+  showManagerTalk('pre_match',()=>{
+    const result=managerDecision(currentManager(),'begin_match',{fixtureId:prepared.fixture.id});
+    if(!result.ok){toast(result.message);return;}
+    launchMatch();
+  });
+}
+function showManagerTalk(phase,after=null) {
+  if(document.querySelector('dialog[open]'))return;
+  const manager=currentManager(),world=ensureManagerSimulation(manager);
+  const fixtureId=started?engine.options.managerFixtureId:managerMatchOptions(manager).fixture?.id;
+  if(!fixtureId){toast('Danışıq üçün matç tapılmadı.');return;}
+  const title={pre_match:'Oyundan əvvəl soyunub-geyinmə otağı',half_time:'Fasilə çıxışı',post_match:'Oyundan sonra komanda ilə söhbət'}[phase];
+  $('team-talk-title').textContent=title;
+  $('team-talk-context').textContent=started?`${engine.score.join(' – ')} · Hər futbolçu yaşına, xarakterinə və sənə etimadına uyğun reaksiya verir.`:'Üslubunu seç. Gənclər, təcrübəlilər və ulduzlar eyni sözləri fərqli qəbul edir.';
+  $('team-talk-result').replaceChildren();
+  const already=world.psychology.talkKeys.includes(`${fixtureId}:${phase}`);
+  const choices=[['calm','Sakit danış','Gərginliyi azalt, fikri oyuna yönəlt.'],['supportive','Dəstək ver','Özünəinamı qaldır, gəncləri sakitləşdir.'],['inspire','Ruhlandır','İddialı oyunçulara məqsədi xatırlat.'],['tactical','Taktikanı izah et','Tapşırıqları dəqiqləşdir, diqqəti topla.'],['demanding','Tələbkar ol','Peşəkarları səfərbər et; etimadı zəif olanları sıxa bilər.'],['angry','Sərt və əsəbi danış','Qorxu və narazılıq yarada bilər; vəziyyət və münasibət həlledicidir.']];
+  $('team-talk-choices').replaceChildren();
+  for(const [style,label,description] of choices){
+    const button=document.createElement('button');button.type='button';button.dataset.talkStyle=style;button.disabled=already;
+    const b=document.createElement('b');b.textContent=label;const small=document.createElement('small');small.textContent=description;button.append(b,small);
+    button.addEventListener('click',()=>{
+      const result=managerDecision(currentManager(),'team_talk',{phase,style,context:{fixtureId,score:started?[...engine.score]:[0,0]}});
+      updateManagerMental();const saved=persist(started);
+      $('team-talk-result').replaceChildren();
+      const message=document.createElement('p');message.textContent=result.message; $('team-talk-result').append(message);
+      const effects=document.createElement('ul');for(const effect of (result.effects??[]).slice(0,12)){const item=document.createElement('li');item.textContent=effect;effects.append(item);}$('team-talk-result').append(effects);
+      if(result.ok)$('team-talk-choices').querySelectorAll('button').forEach(b=>b.disabled=true);
+      if(!saved)toast('Çıxış tətbiq edildi, yaddaşa yazılmadı. Yaddaşın surətini çıxar.');
+    });
+    $('team-talk-choices').append(button);
+  }
+  if(already)$('team-talk-result').textContent='Bu mərhələdə çıxış artıq edilib. Təsiri saxlanılır.';
+  const defaultStyle=world.psychology.policies.coachStyle;
+  const defaultLabel=choices.find(([style])=>style===defaultStyle)?.[1]??'Dəstək ver';
+  $('team-talk-context').append(document.createTextNode(` Seçim etmədən davam etsən, saxladığın “${defaultLabel}” üslubu tətbiq ediləcək.`));
+  talkContinue=()=>{
+    const current=ensureManagerSimulation(currentManager());
+    if(!current.psychology.talkKeys.includes(`${fixtureId}:${phase}`)){
+      managerDecision(currentManager(),'team_talk',{phase,context:{fixtureId,score:started?[...engine.score]:[0,0]}});
+      updateManagerMental();persist(started);
+    }
+    after?.();
+  };
+  $('team-talk-continue').textContent=phase==='pre_match'?'Meydana çıx →':phase==='half_time'?'İkinci hissəyə başla →':'Bağla';
+  $('team-talk-dialog').showModal();
+}
+function showSubstitution(slot) {
+  const effective=engine.state==='PAUSED'?engine.previousState:engine.state;
+  if(!started||!engine.hasPersistentRoster)return;
+  if(effective==='IN_PLAY'||['PRE_MATCH','FULL_TIME','GOAL_CELEBRATION'].includes(effective)){toast('Top dayananda və ya fasilədə əvəzetmə et.');return;}
+  if(engine.substitutions>=5){toast('Beş əvəzetmə limitinə çatmısan.');return;}
+  const player=engine.players[slot];pendingSubSlot=slot;
+  $('substitution-context').textContent=`${engine.clock.display} · ${player.name}. Səbəb və danışıq üslubu onun reaksiyasını dəyişəcək.`;
+  $('bench-player').replaceChildren();
+  for(const p of engine.bench){const option=document.createElement('option');option.value=p.persistentId??p.id;option.textContent=`#${p.number} ${p.name} · ${p.role} · hazırlıq ${Math.round(p.fitness)}`;$('bench-player').append(option);}
+  if(!engine.bench.length){toast('Uyğun ehtiyat oyunçusu qalmayıb.');return;}
+  openDialog('substitution-dialog');
+}
+
 function suspendedFor(selectedMode=mode){return save.suspendedByMode[selectedMode];}
 function storeSuspended(snapshot){save.suspendedByMode[mode]=snapshot;save.suspended=snapshot;}
 function makeMatch() {
   const next = new MatchEngine(options());
   next.cameraMode=mode==='player'?'close':'broadcast';
   if(mode==='manager')next.setTactic(getCareerView(save,'manager').tactic);
-  next.matchId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  next.matchId = next.options.managerFixtureId ? `live-${next.options.managerFixtureId}` : (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`);
   next.kitColor = save.profile.kitColor;
   if(mode==='player') {
     const player = next.players.find(p=>p.id===next.careerPlayer);
@@ -94,7 +191,8 @@ function chooseMode(next) {
   updateModeLayout();
   updateUI();
 }
-function startMatch() {
+function startMatch() { if(mode==='manager'){requestManagerPlay();return;}launchMatch(); }
+function launchMatch() {
   const saved=suspendedFor()?restoreMatch(suspendedFor()):null;
   engine=saved??makeMatch();
   engine.cameraMode??=mode==='player'?'close':'broadcast';
@@ -105,7 +203,7 @@ function startMatch() {
   document.body.classList.add('playing');
   updateModeLayout();
   $('page-heading').textContent=mode==='player'?'Your career. Your moment.':mode==='manager'?'From the touchline.':'Matchday is here.';
-  $('match-context').textContent=`${mode==='quick'?'EXHIBITION':mode==='player'?'PLAYER CAREER':'MANAGER CAREER'} / BAKU PARK`;
+  $('match-context').textContent=mode==='manager'?`BAŞ MƏŞQÇİ / ${engine.options.managerUserIsHome===false?'SƏFƏR MATÇI':'BAKU PARK'}`:`${mode==='quick'?'EXHIBITION':'PLAYER CAREER'} / BAKU PARK`;
   $('pause-button').disabled=false;
   if(saved) {
     if(engine.state==='PAUSED') engine.resume();
@@ -117,10 +215,11 @@ function startMatch() {
   updateUI();
 }
 function returnMenu() {
+  let saved=true;
   if(started) {
     if(engine.state==='FULL_TIME') { recordResult(save,engine); storeSuspended(null); }
     else { engine.pause(); storeSuspended(captureMatch(engine)); }
-    persist(false);
+    saved=persist(false);
   }
   started=false; keys.clear();charges.clear();joy={x:0,y:0};touchSprint=touchPress=false;
   document.body.classList.remove('playing');
@@ -130,6 +229,7 @@ function returnMenu() {
   $('match-message').classList.remove('visible');
   chooseMode(mode);
   renderer.resize();
+  return saved;
 }
 function togglePause() {
   if(!started || ['FULL_TIME','HALF_TIME'].includes(engine.state)) return;
@@ -169,11 +269,12 @@ all('[data-nav]').forEach(button=>button.addEventListener('click',()=>{
   chooseMode(value==='play'?'quick':value);
 }));
 $('save-button').addEventListener('click',()=>toast(persist()?'Your profile and match are saved on this device.':'Browser storage is unavailable. Your game is still playable.'));
-$('menu-button').addEventListener('click',()=>{returnMenu();toast('Progress saved. Your match will be here when you return.');});
+$('menu-button').addEventListener('click',()=>{const ok=returnMenu();toast(ok?'Gedişat saxlanıldı. Karyera və matç buradadır.':'Yaddaşa yazılmadı. Karyeradan yaddaş faylını çıxar.');});
 $('pause-button').addEventListener('click',togglePause);
 $('kickoff-button').addEventListener('click',()=>{
   if(!started){startMatch();return;}
-  if(engine.state==='FULL_TIME'){storeSuspended(null);started=false;startMatch();return;}
+  if(engine.state==='FULL_TIME'){if(mode==='manager'){returnMenu();return;}storeSuspended(null);started=false;startMatch();return;}
+  if(engine.state==='HALF_TIME'&&mode==='manager'){showManagerTalk('half_time',()=>{engine.continueMatch();lastFrame=0;updateUI();});return;}
   engine.continueMatch();lastFrame=0;updateUI();
 });
 $('fullscreen-button').addEventListener('click',async()=>{
@@ -194,7 +295,8 @@ $('tactic').addEventListener('change',event=>{engine.setTactic(event.target.valu
 const descriptions={balanced:'Keep your shape. Move the ball. Find the opening.',wide:'Stretch the pitch. Send full-backs forward and deliver from either wing.',press:'Close down the ball carrier. Force errors higher up the pitch.',counter:'Stay compact, then release your forwards into space.'};
 function updateModeLayout(){
   const careerMenu=!started&&mode!=='quick';
-  $('career-hub').hidden=!careerMenu;
+  $('career-hub').hidden=!(careerMenu&&mode==='player');
+  $('manager-dashboard').hidden=!(careerMenu&&mode==='manager');
   $('home-intro').hidden=mode!=='quick';
   $('match-heading-row').hidden=careerMenu;
   document.querySelector('.match-layout').hidden=careerMenu;
@@ -228,6 +330,11 @@ const careerActions={
 };
 function renderCareer(){
   if(mode==='quick')return;
+  if(mode==='manager'){
+    const manager=currentManager(),world=ensureManagerSimulation(manager);
+    renderManagerDashboard($('manager-dashboard'),{manager,world,onCommand:executeManagerCommand,onPlay:requestManagerPlay,onSimulate:()=>{const result=executeManagerCommand('simulate');if(result.ok)toast(result.message);},onExport:exportProgress,onImport:()=>$('import-save-file').click()});
+    return;
+  }
   const c=getCareerView(save,mode),player=mode==='player';
   $('career-eyebrow').textContent=player?'PLAYER CAREER / YOUR JOURNEY':'MANAGER CAREER / CLUB OFFICE';
   $('career-title').innerHTML=player?'ONE LIFE.<br />ONE LEGACY.':'THE CLUB.<br />YOUR CALL.';
@@ -269,6 +376,35 @@ $('career-play').addEventListener('click',startMatch);
 $('career-resume').addEventListener('click',()=>{storeSuspended(null);persist(false);startMatch();});
 all('[data-manager-tactic]').forEach(button=>button.addEventListener('click',()=>{if(mode!=='manager')return;engine.setTactic(button.dataset.managerTactic);setManagerPlan(save,{tactic:button.dataset.managerTactic});persist();updateUI();}));
 $('manager-squad').addEventListener('click',()=>{document.querySelector('[data-panel="tactics"]').click();document.querySelector('.match-panel').scrollIntoView({behavior:'smooth',block:'nearest'});});
+$('manager-speed').addEventListener('change',()=>{managerSpeed=Number($('manager-speed').value);});
+$('manager-talk-button').addEventListener('click',()=>{
+  if(mode!=='manager'||!started)return;
+  const state=engine.state==='PAUSED'?engine.previousState:engine.state;
+  if(state==='HALF_TIME')showManagerTalk('half_time',()=>{if(engine.state==='PAUSED')engine.resume();engine.continueMatch();lastFrame=0;updateUI();});
+  else if(state==='FULL_TIME')showManagerTalk('post_match');
+  else toast('Komanda çıxışı fasilədə və oyundan sonra mümkündür. Taktiki əmrləri indi dəyişə bilərsən.');
+});
+$('team-talk-continue').addEventListener('click',()=>{
+  const after=talkContinue;talkContinue=null;$('team-talk-dialog').close();after?.();
+});
+$('confirm-substitution').addEventListener('click',()=>{
+  if(pendingSubSlot===null)return;
+  const outgoing=engine.players[pendingSubSlot]?.persistentId,incoming=$('bench-player').value;
+  const reason=$('substitution-reason').value,style=$('substitution-style').value,minute=engine.matchMinute;
+  if(!engine.substitute(pendingSubSlot,incoming,reason)){toast('Əvəzetmə yalnız top dayananda mümkündür. Beş dəyişiklik və qırmızı kart qaydaları qüvvədədir.');return;}
+  engine.substitutionEvents.at(-1).style=style;
+  const result=managerDecision(currentManager(),'substitution',{outgoingId:outgoing,incomingId:incoming,minute,reason,style,context:{fixtureId:engine.options.managerFixtureId}});
+  updateManagerMental();lastLineupSignature='';const saved=persist();
+  pendingSubSlot=null;$('substitution-dialog').close();updateUI();toast(saved?result.message:'Əvəzetmə edildi, yaddaşa yazılmadı. Yaddaşın surətini çıxar.');
+});
+$('import-save-file').addEventListener('change',async event=>{
+  const file=event.target.files?.[0];event.target.value='';if(!file)return;
+  if(file.size>8*1024*1024){toast('Yaddaş faylı çox böyükdür.');return;}
+  const imported=importSave(await file.text());
+  if(!imported){toast('Bu fayl etibarlı Footba11 Heroes yaddaşı deyil.');return;}
+  if(!saveData(imported)){toast('Yaddaş qəbul edildi, amma brauzerə yazıla bilmir. Mövcud oyun saxlanıldı.');return;}
+  save=imported;started=false;document.body.classList.remove('playing');profileUI();chooseMode('manager');toast('Karyeralar və saxlanmış matçlar fayldan bərpa edildi.');
+});
 all('[data-panel]').forEach(button=>button.addEventListener('click',()=>{
   all('[data-panel]').forEach(b=>b.classList.toggle('active',b===button));
   ['tactics','stats','events'].forEach(name=>$(`panel-${name}`).hidden=name!==button.dataset.panel);
@@ -304,6 +440,7 @@ function fire(kind,power=.6) {
     aim=kind==='shoot'?{x:engine.directions[0]===1?106:-1,y:34+input.y*2.6}:{x:b.x+input.x/d*25,y:b.y+input.y/d*25};
   }
   const success=engine.action(kind,power,aim);
+  if(kind==='call')updateUI();
   if(!success&&kind==='call')toast(engine.getPassCallStatus?.().message??'Boş yerə çıxıb yenidən topu istə.');
   if(!success&&kind!=='switch'&&kind!=='call'&&engine.state==='IN_PLAY'){
     const owner=engine.ball.owner!==null?engine.players[engine.ball.owner]:null;
@@ -368,7 +505,7 @@ function renderLineup(){
     const bar=document.createElement('span');bar.className='lineup-stamina';bar.title=`Stamina ${Math.round(player.stamina)}%`;
     const fill=document.createElement('i');fill.style.width=`${player.stamina}%`;bar.append(fill);
     const sub=document.createElement('button');sub.className='sub-button';sub.textContent='⇄';sub.title=`Substitute ${player.name} during a stoppage`;sub.setAttribute('aria-label',sub.title);sub.disabled=player.sentOff||player.substituted;
-    sub.addEventListener('click',()=>{if(engine.substitute(player.id)){lastLineupSignature='';persist();updateUI();toast('Substitution made. Fresh legs on the pitch.');}else toast('Substitutions are available during stoppages. Maximum five.');});
+    sub.addEventListener('click',()=>{if(mode==='manager'&&engine.hasPersistentRoster){showSubstitution(player.id);return;}if(engine.substitute(player.id)){lastLineupSignature='';persist();updateUI();toast('Substitution made. Fresh legs on the pitch.');}else toast('Substitutions are available during stoppages. Maximum five.');});
     row.append(number,role,name,bar,sub);fragment.append(row);
   });$('lineup').replaceChildren(fragment);
   const mini=document.createDocumentFragment();
@@ -413,6 +550,15 @@ function renderOffBall(){
 }
 function updateUI(){
   if(!engine)return;
+  $('home-team-name').textContent=engine.options.managerUserName??'BAKU ATHLETIC';
+  $('away-team-name').textContent=engine.options.managerOpponentName??'COAST UNITED';
+  $('user-venue-label').textContent=engine.options.managerUserIsHome===false?'SƏFƏR':'EV';
+  $('opponent-venue-label').textContent=`${engine.options.managerUserIsHome===false?'EV':'SƏFƏR'} · 4-3-3`;
+  const talkState=engine.state==='PAUSED'?engine.previousState:engine.state;
+  $('manager-talk-button').textContent=talkState==='HALF_TIME'?'FASİLƏ ÇIXIŞI':talkState==='FULL_TIME'?'OYUNDAN SONRA DANIŞ':'ÇIXIŞ ET';
+  $('manager-talk-button').disabled=!['HALF_TIME','FULL_TIME'].includes(talkState);
+  $('manager-talk-summary').hidden=!(started&&mode==='manager'&&['HALF_TIME','FULL_TIME'].includes(talkState));
+  if(!$('manager-talk-summary').hidden)$('manager-talk-summary').textContent=talkState==='HALF_TIME'?'Fasilədir. “FASİLƏ ÇIXIŞI” ilə üslubunu seç, “HEYƏT ⇄” ilə əvəzetmə et.':'Matç bitdi. Komanda ilə danışa və karyera qərargahına qayıda bilərsən.';
   $('home-score').textContent=engine.score[0];$('away-score').textContent=engine.score[1];$('clock').textContent=engine.clock.display;
   $('half-label').textContent=!started?'PRE-MATCH':engine.state==='FULL_TIME'?'FULL TIME':engine.clock.half===1?'1ST HALF':'2ND HALF';
   $('pitch-status').textContent=!started?'KICK-OFF READY':engine.state.replaceAll('_',' ');
@@ -441,7 +587,7 @@ function updateUI(){
       $('overlay-title').textContent=paused?'We’ll hold the play.':half?'Half-time. Reset. Go again.':`${engine.score[0]} – ${engine.score[1]} · ${engine.score[0]===engine.score[1]?'Honours even.':engine.score[0]>engine.score[1]?'Your moment. Your win.':'Another lesson. Another match.'}`;
       $('overlay-description').textContent=paused?'Your clock is paused. Ready when you are.':half?'Teams switch ends. Change tactics or make a substitution.':'Your career result has been saved on this device.';
       if(engine.state==='FULL_TIME'&&mode==='quick')$('overlay-description').textContent='Exhibition complete. Ready for another match?';
-      $('kickoff-button').innerHTML=`${paused?'RESUME MATCH':half?'SECOND HALF':'PLAY AGAIN'} <span>→</span>`;
+      $('kickoff-button').innerHTML=`${paused?'RESUME MATCH':half?(mode==='manager'?'FASİLƏ ÇIXIŞI → İKİNCİ HİSSƏ':'SECOND HALF'):(mode==='manager'?'KARYERA QƏRARGAHINA QAYIT':'PLAY AGAIN')} <span>→</span>`;
     }
     if(engine.notification!==lastNotification){lastNotification=engine.notification;$('match-message').textContent=lastNotification;messageUntil=performance.now()+3500;}
     $('match-message').classList.toggle('visible',!show&&performance.now()<messageUntil);
@@ -452,22 +598,23 @@ function updateUI(){
 }
 
 function frame(timestamp){
-  const dt=lastFrame?Math.min((timestamp-lastFrame)/1000,.25):0;lastFrame=timestamp;
+  const dt=lastFrame?(timestamp-lastFrame)/1000:0;lastFrame=timestamp;
   const kx=(keys.has('KeyD')||keys.has('ArrowRight')?1:0)-(keys.has('KeyA')||keys.has('ArrowLeft')?1:0);
   const ky=(keys.has('KeyS')||keys.has('ArrowDown')?1:0)-(keys.has('KeyW')||keys.has('ArrowUp')?1:0);
   input.x=kx||joy.x;input.y=ky||joy.y;input.sprint=touchSprint||keys.has('ShiftLeft')||keys.has('ShiftRight');
   input.press=touchPress||(isDefending()&&(keys.has('KeyJ')||keys.has('Space')));input.shield=keys.has('KeyZ');
   if(started){
-    engine.step(dt,input);autoSaveAge+=dt;
+    advanceSimulation(engine,dt,input,mode==='manager'?managerSpeed:1);autoSaveAge+=Math.min(dt,5);
     if(engine.state==='FULL_TIME'&&finishedSaved!==engine.matchId){recordResult(save,engine);storeSuspended(null);finishedSaved=engine.matchId;persist(false);}
     if(autoSaveAge>15){autoSaveAge=0;persist();}
   }
-  renderer.render(engine,dt);
+  renderer.render(engine,Math.min(dt,.1));
   if(timestamp-lastUI>150){lastUI=timestamp;updateUI();}
   requestAnimationFrame(frame);
 }
 window.addEventListener('pagehide',()=>persist());
 profileUI();chooseMode(save.suspended?.options?.mode??'quick');requestAnimationFrame(frame);
+if(save.recoveredFromBackup)toast('Əsas yaddaş zədələndiyi üçün əvvəlki sağlam surət bərpa edildi.');
 
 // Inspectable only in local development; production has no public debug control.
-if(import.meta.env.DEV)window.__football={get engine(){return engine;},get save(){return save;},startMatch,returnMenu,fire,renderer};
+if(import.meta.env.DEV)window.__football={get engine(){return engine;},get save(){return save;},managerDecision:(action,payload)=>executeManagerCommand(action,payload),startMatch,returnMenu,fire,renderer};

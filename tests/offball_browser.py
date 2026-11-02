@@ -41,6 +41,15 @@ def arrange_call(page, situation="open"):
       e.restartOrigin=null;e.offside=null;e.keeperHold=null;e.accumulator=0;
       e.penaltyInProgress=false;e.deferredClockEvent=null;e.passRequest=null;
       e.passCall=null;e.lastPassCallAt=-Infinity;e.kickCooldown=0;e.selectedTarget=null;
+      // Keep the arranged scene stable while Playwright locates the real control.
+      // The capture listener releases time immediately before the real input handler.
+      if(!e.__qaOriginalStep){e.__qaOriginalStep=e.step;e.step=function(...args){if(!this.__qaAwaitCall)return this.__qaOriginalStep(...args);};}
+      e.__qaAwaitCall=true;
+      if(!window.__qaInputGate){
+        const release=event=>{if(event.type==='keydown'&&['KeyR','KeyJ','Space'].includes(event.code)||event.type==='click'&&event.target.closest?.('#call-ball-button'))window.__football.engine.__qaAwaitCall=false;};
+        document.addEventListener('keydown',release,true);document.addEventListener('click',release,true);window.__qaInputGate=true;
+      }
+
       e.players.forEach(p=>{p.vx=p.vy=0;p.timer=20;p.sentOff=false;p.substituted=false;
         p.x=p.team===0?8+(p.id%3)*2:78+(p.id%5);p.y=4+(p.id%10)*6;
       });
@@ -97,7 +106,7 @@ with sync_playwright() as p:
         expect(page.locator("#call-ball-button")).to_be_enabled()
         page.locator("#pitch").focus()
         page.keyboard.press("r")
-        assert status(page)["status"] in ["waiting","passed"], status(page)
+        assert status(page)["status"] in ["waiting","passed","received"], status(page)
         expect(page.locator("#call-ball-button")).to_be_disabled()
         page.wait_for_function("window.__qaCallPhases.some(p=>p.status==='passed')")
         transit=page.evaluate("window.__qaCallPhases.find(p=>p.status==='passed')")
@@ -112,9 +121,13 @@ with sync_playwright() as p:
         arrange_call(page,"blocked")
         expect(page.locator("#call-ball-button")).to_be_enabled()
         page.locator("#call-ball-button").click()
-        page.screenshot(path=str(ARTIFACTS/"offball-blocked.png"), full_page=True)
         page.wait_for_function("window.__qaCallTitles.includes('ÖTÜRMƏ YOLU BAĞLIDIR')")
-        page.wait_for_function("window.__qaCallPhases.some(p=>p.status==='blocked'&&p.reason==='lane'&&p.owner===window.__offballFixture.owner&&p.raised)")
+        try:
+            page.wait_for_function("window.__qaCallPhases.some(p=>p.status==='blocked'&&p.reason==='lane'&&p.owner===window.__offballFixture.owner&&p.raised)")
+        except Exception:
+            print("CALL TRACE",page.evaluate("window.__qaCallPhases"),flush=True)
+            raise
+        page.screenshot(path=str(ARTIFACTS/"offball-blocked.png"), full_page=True)
         # Start a fresh live request after screenshot capture; captures may span several real seconds.
         page.locator("#pitch").focus()
         arrange_call(page,"blocked")
@@ -158,12 +171,13 @@ with sync_playwright() as p:
         page.wait_for_function("window.__football.engine.state==='IN_PLAY'")
         arrange_call(page)
         page.locator("#pitch").focus();page.keyboard.press("r")
-        assert status(page)["status"] in ["waiting","passed"], status(page)
+        assert status(page)["status"] in ["waiting","passed","received"], status(page)
         passed("Explicit R request also works in quick-match control")
 
         page.locator("#menu-button").click()
         page.locator('[data-mode="manager"]').click()
-        page.locator("#career-play").click()
+        page.locator("#manager-dashboard [data-play]").first.click()
+        page.locator("#team-talk-continue").click()
         expect(page.locator("#offball-panel")).to_be_hidden()
         assert page.evaluate("window.__football.engine.action('call')") is False
         passed("Manager has no player pass-call UI or direct request action")

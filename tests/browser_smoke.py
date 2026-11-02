@@ -207,17 +207,27 @@ with sync_playwright() as playwright:
         assert page.evaluate("window.__football.save.suspendedByMode.player.score[0]") == 2
         player_before_manager = page.evaluate("JSON.stringify(window.__football.save.careers.player)")
         page.locator('[data-mode="manager"]').click()
-        expect(page.locator("#career-hub")).to_be_visible()
+        expect(page.locator("#manager-dashboard")).to_be_visible()
+        expect(page.locator("#career-hub")).to_be_hidden()
         budget = page.evaluate("window.__football.save.careers.manager.budget")
-        page.locator('[data-career-action="scouting"]').click()
+        page.locator('[data-tab="market"]').click()
+        page.locator('[data-command="scouting"]').click()
         assert page.evaluate("window.__football.save.careers.manager.budget") == budget - 1200
         assert page.evaluate("window.__football.save.careers.manager.scoutingReports") == 1
+        assert page.evaluate("window.__football.save.careers.manager.world.scoutReports[0].playerIds.length") == 4
         assert page.evaluate("JSON.stringify(window.__football.save.careers.player)") == player_before_manager
-        page.locator("#training-focus").select_option("attack")
+        page.locator('[data-tab="office"]').click()
+        page.locator('[data-plan="training_focus"]').select_option("attack")
+        assert page.evaluate("window.__football.save.careers.manager.world.plan.trainingFocus") == "attack"
         page.screenshot(path=str(ARTIFACTS / "new-career-manager.png"), full_page=True)
         passed("Manager office has separate budget/scouting/training decisions that do not change player life")
 
-        page.locator("#career-play").click()
+        page.locator('#manager-dashboard [data-play]').click()
+        expect(page.locator("#team-talk-dialog")).to_be_visible()
+        page.locator('[data-talk-style="calm"]').click()
+        expect(page.locator("#team-talk-result")).not_to_be_empty()
+        assert page.evaluate("window.__football.save.careers.manager.world.psychology.talkKeys.some(key=>key.endsWith(':pre_match'))")
+        page.locator("#team-talk-continue").click()
         page.wait_for_function("document.body.classList.contains('playing')")
         expect(page.locator("#touch-controls")).to_be_hidden()
         expect(page.locator("#manager-controls")).to_be_visible()

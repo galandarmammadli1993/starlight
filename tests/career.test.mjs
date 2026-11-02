@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ensureCareers, getCareerView, careerAction, getPlayerAttributes, getManagerAttributes, setTrainingFocus, setManagerPlan, applyCareerMatch } from '../src/game/career.mjs';
+import { ensureManagerSimulation } from '../src/game/manager-session.mjs';
+import { getClubPlayers } from '../src/game/manager-world.mjs';
 const fresh = () => ({ version: 1, profile: { name: 'Hero' }, career: { results: [] } });
 const match = (mode, id = 'match-1', score = [2, 1]) => ({ state: 'FULL_TIME', options: { mode }, matchId: id, score, careerPlayer: 6, playerGoals: { 6: 1, 9: 1 } });
 
@@ -48,10 +50,13 @@ test('community activity affects personal reputation without changing club moral
   assert.equal(save.careers.player.reputation, 12);assert.deepEqual(save.careers.manager, manager);
 });
 test('club training improves match preparation with real budget and fitness costs', () => {
-  const save = fresh();const before = getManagerAttributes(save);
+  const save = fresh();const world = ensureManagerSimulation(ensureCareers(save).manager);
+  const playerId = world.lineup[0], before = structuredClone(world.players.find(p => p.id === playerId));
   careerAction(save, 'manager', 'team_training');
-  assert.equal(save.careers.manager.budget, 49500);assert.equal(save.careers.manager.teamFitness, 68);
-  assert.ok(getManagerAttributes(save).passing > before.passing);
+  const after = save.careers.manager.world.players.find(p => p.id === playerId);
+  assert.equal(save.careers.manager.budget, 49300);
+  assert.equal(after.fatigue, Math.min(100, before.fatigue + 8));
+  assert.equal(after.attributes.passing, Math.min(before.potential, before.attributes.passing + .35));
   assert.equal(save.careers.player.day, 1);assert.equal(save.careers.player.energy, 85);
 });
 test('club cannot buy development or reports without money', () => {
@@ -60,11 +65,18 @@ test('club cannot buy development or reports without money', () => {
   assert.equal(save.careers.manager.day, 1);assert.equal(save.careers.manager.budget, 100);
   assert.equal(careerAction(save, 'manager', 'rest_team').ok, true);
 });
-test('recovery and youth decisions influence the team attributes rather than the personal player', () => {
-  const save = fresh();const before = getManagerAttributes(save);
-  careerAction(save, 'manager', 'recovery');assert.equal(getManagerAttributes(save).fitness, 100);
-  careerAction(save, 'manager', 'youth');assert.ok(getManagerAttributes(save).passing > before.passing);
-  assert.equal(save.careers.player.skills.passing, 60);assert.equal(save.careers.manager.budget, 44650);
+test('recovery restores actual people and youth creates a persistent academy player', () => {
+  const save = fresh();const world = ensureManagerSimulation(ensureCareers(save).manager);
+  const before = getClubPlayers(world).map(p => ({id:p.id,fitness:p.fitness,fatigue:p.fatigue}));
+  careerAction(save, 'manager', 'recovery');
+  for (const p of getClubPlayers(save.careers.manager.world)) {
+    const old = before.find(x => x.id === p.id);
+    assert.equal(p.fitness, Math.min(100,old.fitness+6));assert.equal(p.fatigue,Math.max(0,old.fatigue-20));
+  }
+  careerAction(save, 'manager', 'youth');
+  const youth = getClubPlayers(save.careers.manager.world).filter(p => !before.some(old => old.id === p.id));
+  assert.equal(youth.length,1);assert.equal(youth[0].age,17);assert.equal(youth[0].status,'prospect');
+  assert.equal(save.careers.player.skills.passing, 60);assert.equal(save.careers.manager.budget, 44500);
 });
 test('attack and defensive training focus produce different match attributes', () => {
   const save = fresh();assert.equal(setTrainingFocus(save, 'attack'), true);const attack = getManagerAttributes(save);

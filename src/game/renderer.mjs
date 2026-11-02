@@ -261,7 +261,7 @@ export class PitchRenderer {
   _updateCamera(engine, dt, instant = false) {
     const playing=engine&&!['PRE_MATCH','KICK_OFF_SETUP'].includes(engine.state);
     const ball=engine?.ball,player=engine?.players?.find(p=>p.id===engine.controlled&&!p.sentOff);
-    const wide=!playing||engine?.options?.mode==='manager';
+    const wide=!playing||(engine?.options?.mode==='manager'&&engine?.cameraMode!=='close');
     const close=!wide&&engine?.cameraMode==='close'&&player;
     const separation=player&&ball?Math.hypot(player.x-ball.x,player.y-ball.y):0;
     const tx=wide?52.5:close?clamp(player.x*.65+(ball?.x??player.x)*.35,14,91):clamp(52.5+((ball?.x??52.5)-52.5)*.58,24,81);
